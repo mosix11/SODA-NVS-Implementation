@@ -21,7 +21,7 @@ class MNIST():
         super().__init__()
         
         if not data_dir.exists():
-            raise RuntimeError("The dat directory does not exist!")
+            raise RuntimeError("The data directory does not exist!")
         dataset_dir = data_dir.joinpath(Path('MNIST'))
         if not dataset_dir.exists():
             dataset_dir.mkdir()

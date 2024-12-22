@@ -1,1 +1,1 @@
-from .datasets import MNIST, FashionMNIST
+from .datasets import MNIST, FashionMNIST, NMR
