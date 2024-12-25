@@ -1,6 +1,6 @@
 import torch
 from torchvision import datasets
-from torchvision.transforms import v2
+import torchvision.transforms.v2 as transforms
 from torch.utils.data import Dataset, DataLoader, random_split
 
 import os
@@ -35,12 +35,12 @@ class MNIST():
         self.seed = seed
         
         transformations = [
-            v2.Resize(img_size),
-            v2.ToImage(),                       # Convert PIL Image/NumPy to tensor
-            v2.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0] and set dtype
-            v2.Normalize((0.1307,), (0.3081,)) # Values Specific to MNIST
+            transforms.Resize(img_size),
+            transforms.ToImage(),                       # Convert PIL Image/NumPy to tensor
+            transforms.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0] and set dtype
+            transforms.Normalize((0.1307,), (0.3081,)) # Values Specific to MNIST
         ]
-        self.transformations = v2.Compose(transformations)
+        self.transformations = transforms.Compose(transformations)
 
         self._init_loaders()
 

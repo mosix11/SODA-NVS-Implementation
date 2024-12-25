@@ -21,8 +21,9 @@ import tqdm
 from .camera_utils import create_ray_grid
 
 class ObjectDataset(Dataset):
-    def __init__(self, obj_paths, class_ids, transform=None, num_views=2, num_channels=3) -> None:
+    def __init__(self, obj_paths, class_ids, img_size = (32, 32), transform=None, num_views=2, num_channels=3) -> None:
         self.obj_paths = obj_paths
+        self.img_size = img_size
         self.transform = transform
         self.num_views = num_views
         self.class_ids = class_ids
@@ -40,7 +41,7 @@ class ObjectDataset(Dataset):
         
         precomputed_ray_grids = []
         for viewpoint in self.precomputed_viewpoints:
-            precomputed_ray_grids.append(create_ray_grid(viewpoint, H=64, W=64))
+            precomputed_ray_grids.append(create_ray_grid(viewpoint, H=img_size[0], W=img_size[1]))
 
         self.precomputed_ray_grids = torch.stack(precomputed_ray_grids, dim=0)
         
@@ -54,12 +55,15 @@ class ObjectDataset(Dataset):
         with np.load(file_path, mmap_mode='r') as data:
             views = data['views'][:, :self.num_channels, :, :]  # Shape: (24, C, H, W)
         
+        
+        
+        
         label = torch.tensor(self.class_ids.index(file_path.stem.split("_")[0])).long()
         # Randomly sample `num_views` from the 24 available views
         view_ids = np.sort(np.random.choice(24, self.num_views, replace=False))
         views_selected = views[view_ids]
 
-        views_selected = torch.from_numpy(views_selected).float()
+        views_selected = torch.from_numpy(views_selected)
         ray_grids = self.precomputed_ray_grids[view_ids]
         
         
@@ -76,7 +80,11 @@ class ObjectDataset(Dataset):
             views = data['views'][:, :self.num_channels, :, :] # Shape: (24, C, H, W)
         
         label = torch.tensor(self.class_ids.index(file_path.stem.split("_")[0])).long()
-        return torch.from_numpy(views).float(), self.precomputed_ray_grids , label
+        
+        views = torch.from_numpy(views)
+        if self.transform:
+            views = torch.stack([self.transform(view) for view in views])
+        return views, self.precomputed_ray_grids , label
 
     def set_num_views(self, num_views):
         self.num_views = num_views
@@ -92,7 +100,7 @@ class NMR():
     def __init__(self,
                  data_dir:Path = Path('./data').absolute(),
                  batch_size:int = 32,
-                 img_size:tuple = (64, 64),
+                 img_size:tuple = (32, 32),
                  num_workers:int = 4,
                  num_views:int = 2,
                  load_opacity:bool = False,
@@ -151,11 +159,24 @@ class NMR():
         self.elevation = 30.
         self.distance = 2.732
         
+        self.dataset_mean = (0.09258475, 0.09884189, 0.10409881, 0.17108302) # RGBA
+        self.dataset_std = (0.21175679, 0.22688305, 0.24043436, 0.36608162) # RGBA
+        
+        transformations = [
+            transforms.Resize(img_size),
+            transforms.ToImage(),                       # Convert PIL Image/NumPy to tensor
+            transforms.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0] and set dtype
+            transforms.Normalize(self.dataset_mean[:self.num_channels], self.dataset_std[:self.num_channels]) # Values Specific to NMR calculated from all splits
+        ]
+        self.transformations = transforms.Compose(transformations)
+        
 
         self._preprocess_data()
         self._init_loaders()
         
-        
+    
+    def get_dataset_stats(self):
+        return self.dataset_mean, self.dataset_std    
 
     def get_train_dataloader(self):
         return self.train_loader
@@ -165,6 +186,18 @@ class NMR():
     
     def get_test_dataloader(self):
         return self.test_loader
+    
+    
+    def denormalize(self, batch_tensor):
+        """
+        Denormalize a batch of tensor images channel-wise using the provided mean and std.
+        Assumes the input is a normalized tensor with shape [B, C, H, W].
+        The mean and std should be lists or tensors of length equal to the number of channels.
+        """
+        mean = torch.tensor(self.dataset_mean[:self.num_channels]).view(1, -1, 1, 1)  # Reshape to [1, C, 1, 1] for broadcasting
+        std = torch.tensor(self.dataset_std[:self.num_channels]).view(1, -1, 1, 1)    # Reshape to [1, C, 1, 1] for broadcasting
+        batch_tensor = batch_tensor * std + mean     # Apply channel-wise denormalization
+        return torch.clip(batch_tensor, 0, 1)        # Clip values to [0, 1]
     
     def _init_loaders(self):
         self.train_loader = self._build_dataloader(self.train_set)
@@ -179,9 +212,12 @@ class NMR():
     def _preprocess_data(self):
         self._split_views_to_files()
         
-        self.train_set = ObjectDataset(self._get_split_paths('train'), self.CLASS_IDS, num_views=self.num_views, num_channels=self.num_channels)
-        self.val_set = ObjectDataset(self._get_split_paths('val'), self.CLASS_IDS, num_views=self.num_views, num_channels=self.num_channels)
-        self.test_set = ObjectDataset(self._get_split_paths('test'), self.CLASS_IDS, num_views=self.num_views, num_channels=self.num_channels)
+        self.train_set = ObjectDataset(self._get_split_paths('train'), self.CLASS_IDS, self.img_size,
+                                       self.transformations, num_views=self.num_views, num_channels=self.num_channels)
+        self.val_set = ObjectDataset(self._get_split_paths('val'), self.CLASS_IDS, self.img_size,
+                                     self.transformations, num_views=self.num_views, num_channels=self.num_channels)
+        self.test_set = ObjectDataset(self._get_split_paths('test'), self.CLASS_IDS, self.img_size,
+                                      self.transformations, num_views=self.num_views, num_channels=self.num_channels)
 
     def _get_split_paths(self, split):
         paths = sorted(self.objects_dir.glob(f"*_{split}_*.npz"))  # Matches {class_id}_{split}_{obj_id}.npz
@@ -195,16 +231,41 @@ class NMR():
     def _split_views_to_files(self):
         if self.objects_dir.is_dir() and not any( self.objects_dir.iterdir()): 
             mesh_dir = self.dataset_dir / Path('mesh_reconstruction')
+            
+            # Variables for moving average (per channel)
+            total_images = 0
+            running_mean = np.zeros(4)  # 4 channels
+            running_var = np.zeros(4)  # 4 channels
+            
             for split in ['train', 'val', 'test']:
                 for npz_file in tqdm.tqdm(mesh_dir.glob(f'*_{split}_images.npz'), desc=f"Processing {split} set..."):
                     class_id = npz_file.stem.split('_')[0]
                     with np.load(npz_file) as data:
+                        
                         all_objects = data['arr_0']  # Shape: (num_objects, 24, C, H, W)
+                        
                         for obj_id, views in enumerate(all_objects):
+                            
+                            # # Calculate mean and std for current object's views without modifying data
+                            # views_normalized = views / 255.0  # Normalize to [0, 1] for statistics
+                            # obj_mean = np.mean(views_normalized, axis=(0, 2, 3))  # Per channel mean
+                            # obj_var = np.var(views_normalized, axis=(0, 2, 3))    # Per channel variance
+                            
+                            # # Update global moving mean and variance
+                            # num_views = 24  # 24 views per object * num_objects
+                            # delta = obj_mean - running_mean
+                            # total_images += num_views
+                            # running_mean += delta * (num_views / total_images)
+                            # running_var += (num_views * obj_var + delta**2 * (num_views * (total_images - num_views) / total_images))
+                            
                             output_path = self.objects_dir / f"{class_id}_{split}_{obj_id}.npz"
                             np.savez_compressed(output_path, views=views)
 
+            # # Finalize std calculation
+            # dataset_std = np.sqrt(running_var / total_images)
+            # dataset_mean = running_mean
             print(f"Finished splitting objects. Output saved to {self.objects_dir}")
+            # print(f"Dataset statistics: Mean = {dataset_mean}   std = {dataset_std}")
         else:
             print(f"Objects already processed! {self.objects_dir}")
         
