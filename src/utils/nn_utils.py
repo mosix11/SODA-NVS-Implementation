@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
 import collections
-from . import utils
+from . import misc_utils
 from torch.utils.data import Dataset
 from typing import Any
 from sklearn.metrics import confusion_matrix

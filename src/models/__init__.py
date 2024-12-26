@@ -1,1 +1,1 @@
-from soda_encoder import SodaEncoder
+from .soda_encoder import SodaEncoder

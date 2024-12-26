@@ -1,5 +1,4 @@
 import torch
-import math
 
 def create_ray_grid(
     camera_position: torch.Tensor,
@@ -51,9 +50,9 @@ def create_ray_grid(
 
     # Build a naive camera coordinate frame
     world_up = torch.tensor([0.0, 1.0, 0.0], device=device)
-    right = torch.cross(forward, world_up)
+    right = torch.cross(forward, world_up, dim=0)
     right = right / (right.norm() + 1e-9)
-    new_up = torch.cross(right, forward)
+    new_up = torch.cross(right, forward, dim=0)
     new_up = new_up / (new_up.norm() + 1e-9)
 
     # Rotation matrix (3,3)

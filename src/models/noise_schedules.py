@@ -32,15 +32,17 @@ def inverted_cosine_beta_schedule(timesteps, s = 0.008):
     return torch.clip(betas, 0, 0.999)
 
 
-def schedules(betas, T, device, type='DDPM'):
-    if betas == 'inverted':
+def get_schedule(beta_schedule, T, type='DDPM'):
+    if beta_schedule == 'inverted':
         schedule_fn = inverted_cosine_beta_schedule
-    elif betas == 'cosine':
+    elif beta_schedule == 'cosine':
         schedule_fn = cosine_beta_schedule
-    else:
-        beta1, beta2 = betas
+    elif beta_schedule == 'linear':
+        beta1, beta2 = [1.0e-4, 0.02]
         schedule_fn = partial(linear_beta_schedule, beta1=beta1, beta2=beta2)
-
+    else:
+        raise RuntimeError('Invalid beta schedule type!')
+        
     if type == 'DDPM':
         beta_t = torch.cat([torch.tensor([0.0]), schedule_fn(T)])
     elif type == 'DDIM':
@@ -67,4 +69,5 @@ def schedules(betas, T, device, type='DDPM'):
         "sqrtmab": sqrtmab,
         "ma_over_sqrtmab": ma_over_sqrtmab,
     }
-    return {key: dic[key].to(device) for key in dic}
+    # return {key: dic[key].to(device) for key in dic}
+    return dic

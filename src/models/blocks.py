@@ -371,6 +371,7 @@ class ResidualBlock(nn.Module):
         else:
             h = self.norm2(self.conv1(self.act1(self.norm1(x))))
 
+        # TODO condition on z using cross attention
         # Adaptive Group Normalization
         t_s, t_b = self.time_emb(t).chunk(2, dim=1)
         z_s, z_b = self.z_emb(z).chunk(2, dim=1)

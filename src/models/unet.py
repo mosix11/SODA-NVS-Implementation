@@ -10,7 +10,7 @@ from .blocks import DownsampleResBlock, UpsampleResBlock, ResAttBlock, MiddleBlo
 
 class UNet(nn.Module):
     def __init__(self, 
-                 image_shape = [3, 64, 64], 
+                 img_shape = [3, 64, 64], 
                  n_channels = 128,
                  ch_mults = (1, 2, 2, 2),
                  is_attn = (False, True, False, False),
@@ -18,9 +18,9 @@ class UNet(nn.Module):
                  dropout = 0.1,
                  n_blocks = 2,
                  use_res_for_updown = False,
-                 time_embed_dim = 512,
-                 z_channels = 128,
-                 grid_condition_dim = None,
+                 t_dim = 512,
+                 z_dim = 128,
+                 c_dim = None,
                  self_attention_type = 'nromal'
                  ):
         """
@@ -30,10 +30,10 @@ class UNet(nn.Module):
         * `is_attn` is a list of booleans that indicate whether to use attention at each resolution
         * `dropout` is the dropout rate
         * `n_blocks` is the number of `UpDownBlocks` at each resolution
-        * `time_embed_dim` the dimension of the time embedding vector
+        * `t_dim` the dimension of the time embedding vector
         * `use_res_for_updown` indicates whether to use ResBlocks for up/down sampling (BigGAN-style)
-        * `z_channels` is the number channels in the latent code derived by the resnet encoder
-        * `grid_condition_dim` is the number of channels of the H×W 2D conditioning grid (for novel view synthesis)
+        * `z_dim` is the number channels in the latent code derived by the resnet encoder
+        * `c_dim` is the number of channels of the H×W 2D conditioning grid (for novel view synthesis)
         * `self_attention_type` is the method used for spatial self attention operation (normal, torch, flash)
         """
         super().__init__()
@@ -41,21 +41,21 @@ class UNet(nn.Module):
         n_resolutions = len(ch_mults)
         
         
-        if grid_condition_dim:
-            self.grid_cond_emb = PoseEmbedding(num_freqs=20)
+        if c_dim:
+            self.c_emb = PoseEmbedding(num_freqs=10)
             # Linear
-            self.rgb_linear_projector = nn.Conv2d(image_shape[0], n_channels, kernel_size=1)
-            self.image_proj = nn.Conv2d(image_shape[0] + grid_condition_dim, n_channels, kernel_size=3, padding=1)
+            self.rgb_linear_projector = nn.Conv2d(img_shape[0], n_channels, kernel_size=1)
+            self.image_proj = nn.Conv2d(n_channels + c_dim, n_channels, kernel_size=3, padding=1)
         else:
-            self.image_proj = nn.Conv2d(image_shape[0], n_channels, kernel_size=3, padding=1)
+            self.image_proj = nn.Conv2d(img_shape[0], n_channels, kernel_size=3, padding=1)
         
         # Time embedding layer.
         # time_channels = n_channels * 4
-        time_channels = time_embed_dim
+        time_channels = t_dim
         self.time_emb = TimeEmbedding(time_channels)
         
         # Latent embedding layer.
-        self.z_emb = LatentEmbedding(z_channels)
+        self.z_emb = LatentEmbedding(z_dim)
         
         
         # Down stages
@@ -66,15 +66,15 @@ class UNet(nn.Module):
             # Number of output channels at this resolution
             out_channels = n_channels * ch_mults[i]
             # `n_blocks` at the same resolution
-            down.append(ResAttBlock(in_channels, out_channels, time_channels, z_channels, is_attn[i], attn_channels_per_head, attn_type=self_attention_type, dropout=dropout))
+            down.append(ResAttBlock(in_channels, out_channels, time_channels, z_dim, is_attn[i], attn_channels_per_head, attn_type=self_attention_type, dropout=dropout))
             h_channels.append(out_channels)
             for _ in range(n_blocks - 1):
-                down.append(ResAttBlock(out_channels, out_channels, time_channels, z_channels, is_attn[i], attn_channels_per_head, attn_type=self_attention_type, dropout=dropout))
+                down.append(ResAttBlock(out_channels, out_channels, time_channels, z_dim, is_attn[i], attn_channels_per_head, attn_type=self_attention_type, dropout=dropout))
                 h_channels.append(out_channels)
             # Down sample at all resolutions except the last
             if i < n_resolutions - 1:
                 if use_res_for_updown:
-                    down.append(DownsampleResBlock(out_channels, time_channels, z_channels, dropout))
+                    down.append(DownsampleResBlock(out_channels, time_channels, z_dim, dropout))
                 else:
                     down.append(Downsample(out_channels))
                 h_channels.append(out_channels)
@@ -82,7 +82,7 @@ class UNet(nn.Module):
         self.down = nn.ModuleList(down)
 
         # Middle block
-        self.middle = MiddleBlock(out_channels, time_channels, z_channels, attn_channels_per_head, attn_type=self_attention_type, dropout=dropout)
+        self.middle = MiddleBlock(out_channels, time_channels, z_dim, attn_channels_per_head, attn_type=self_attention_type, dropout=dropout)
 
         # Up stages
         up = []
@@ -92,12 +92,12 @@ class UNet(nn.Module):
             out_channels = n_channels * ch_mults[i]
             # `n_blocks + 1` at the same resolution
             for _ in range(n_blocks + 1):
-                up.append(ResAttBlock(in_channels + h_channels.pop(), out_channels, time_channels, z_channels, is_attn[i], attn_channels_per_head, attn_type=self_attention_type, dropout=dropout))
+                up.append(ResAttBlock(in_channels + h_channels.pop(), out_channels, time_channels, z_dim, is_attn[i], attn_channels_per_head, attn_type=self_attention_type, dropout=dropout))
                 in_channels = out_channels
             # Up sample at all resolutions except last
             if i > 0:
                 if use_res_for_updown:
-                    up.append(UpsampleResBlock(out_channels, time_channels, z_channels, attn_type=self_attention_type, dropout=dropout))
+                    up.append(UpsampleResBlock(out_channels, time_channels, z_dim, dropout=dropout))
                 else:
                     up.append(Upsample(out_channels))
         assert not h_channels
@@ -106,7 +106,7 @@ class UNet(nn.Module):
         # Final normalization and convolution layer
         self.norm = nn.GroupNorm(8, out_channels)
         self.act = nn.SiLU()
-        self.final = nn.Conv2d(out_channels, image_shape[0], kernel_size=3, padding=1)
+        self.final = nn.Conv2d(out_channels, img_shape[0], kernel_size=3, padding=1)
         
         
     def forward(self, x, t, z, drop_mask, grid_condition=None, ret_activation=False):
@@ -131,19 +131,20 @@ class UNet(nn.Module):
             hooks[name].remove()
         return result, activation
 
-    def forward_core(self, x, t, z, drop_mask, grid_condition=None):
+    def forward_core(self, x, t, z, drop_mask, c=None):
         """
         * `x` has shape `[batch_size, in_channels, height, width]`
         * `t` has shape `[batch_size]`
         * `z` has shape `[batch_size, z_channels]`
         * `drop_mask` has shape `[batch_size]`
-        * `grid_condition` has shape `[batch_size, ray_dim, height, width]`
+        * `c` is the condition (grid condition) and has shape `[batch_size, ray_dim, height, width]`
         """
 
         t = self.time_emb(t)
         z = self.z_emb(z, drop_mask)
-        if grid_condition:
-            c = self.grid_cond_emb(grid_condition)
+        if c is not None:
+            c = self.grid_cond_emb(c)
+            c = c.permute(0, 3, 1, 2)
             x = self.rgb_linear_projector(x)
             x = self.image_proj(torch.cat((x, c), dim=1))
         else:
