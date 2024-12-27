@@ -14,7 +14,7 @@ class UNet(nn.Module):
                  n_channels = 128,
                  ch_mults = (1, 2, 2, 2),
                  is_attn = (False, True, False, False),
-                 attn_channels_per_head = None,
+                 attn_channels_per_head = 4,
                  dropout = 0.1,
                  n_blocks = 2,
                  use_res_for_updown = False,

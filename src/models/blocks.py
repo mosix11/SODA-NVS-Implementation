@@ -78,11 +78,10 @@ class AttentionBlock(nn.Module):
         # Linear layer for final transformation
         self.output = nn.Linear(n_heads * d_k, n_channels)
 
-        self.scale = 1 / torch.sqrt(torch.sqrt(d_k))
+        self.scale = 1 / torch.sqrt(torch.tensor(d_k)) # TODO check if this is correct (the code in SODA repo uses two sqrt)
         self.n_heads = n_heads
         self.d_k = d_k
-        if 'LOCAL_RANK' not in os.environ or int(os.environ['LOCAL_RANK']) == 0:
-            print(f"{self.n_heads} heads, {self.d_k} channels per head")
+
 
     def forward(self, x):
         """
@@ -125,8 +124,7 @@ class TorchAttentionBlock(nn.Module):
         self.attention = nn.MultiheadAttention(embed_dim=n_channels, num_heads=n_heads, batch_first=True)
 
         self.d_k = d_k
-        if 'LOCAL_RANK' not in os.environ or int(os.environ['LOCAL_RANK']) == 0:
-            print(f"{n_heads} heads, {d_k} channels per head")
+
 
     def forward(self, x):
         """
@@ -164,8 +162,6 @@ class FlashAttentionBlock(nn.Module):
         self.n_heads = n_heads
         self.d_k = d_k
 
-        if 'LOCAL_RANK' not in os.environ or int(os.environ['LOCAL_RANK']) == 0:
-            print(f"{n_heads} heads, {d_k} channels per head")
 
     def forward(self, x):
         """

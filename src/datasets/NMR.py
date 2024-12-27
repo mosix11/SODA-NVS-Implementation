@@ -8,42 +8,45 @@ import torchvision
 import torchvision.transforms.v2 as transforms 
 import soft_renderer.functional as srf
 
-from torchvision.io import read_image
+from torchvision.io import decode_image
 
 import os
 import gdown
 import zipfile
+import requests
 import sys
 from pathlib import Path
+import shutil
 
 import tqdm
+from ..utils import misc_utils
 
-from .camera_utils import create_ray_grid
+from .camera_utils import compute_ray_grids, compute_ray_grids_for_views, check_ray_grid_with_pointcloud
 
 class ObjectDataset(Dataset):
-    def __init__(self, obj_paths, class_ids, img_size = (32, 32), transform=None, num_views=2, num_channels=3) -> None:
+    def __init__(self, obj_paths, class_ids, img_size = (32, 32), transform=None, num_views=2) -> None:
         self.obj_paths = obj_paths
         self.img_size = img_size
         self.transform = transform
         self.num_views = num_views
         self.class_ids = class_ids
-        self.num_channels = num_channels
         
-        self.elevation = 30.0
-        self.distance = 2.732
+        # self.elevation = 30.0
+        # self.distance = 2.732
 
-        # Precompute viewpoints for all 24 views
-        self.precomputed_viewpoints = srf.get_points_from_angles(
-            torch.full((24,), self.distance),  # Distances
-            torch.full((24,), self.elevation),  # Elevations
-            -torch.arange(0, 24) * 15          # Azimuths
-        )
+
+        # # Precompute viewpoints for all 24 views
+        # self.precomputed_viewpoints = srf.get_points_from_angles(
+        #     torch.full((24,), self.distance),  # Distances
+        #     torch.full((24,), self.elevation),  # Elevations
+        #     -torch.arange(0, 24) * 15          # Azimuths
+        # )
         
-        precomputed_ray_grids = []
-        for viewpoint in self.precomputed_viewpoints:
-            precomputed_ray_grids.append(create_ray_grid(viewpoint, H=img_size[0], W=img_size[1]))
+        # precomputed_ray_grids = []
+        # for viewpoint in self.precomputed_viewpoints:
+        #     precomputed_ray_grids.append(create_ray_grid(viewpoint, H=img_size[0], W=img_size[1]))
 
-        self.precomputed_ray_grids = torch.stack(precomputed_ray_grids, dim=0)
+        # self.precomputed_ray_grids = torch.stack(precomputed_ray_grids, dim=0)
         
         
     def __len__(self):
@@ -51,40 +54,51 @@ class ObjectDataset(Dataset):
 
     def __getitem__(self, idx):
         
-        file_path = self.obj_paths[idx]
-        with np.load(file_path, mmap_mode='r') as data:
-            views = data['views'][:, :self.num_channels, :, :]  # Shape: (24, C, H, W)
+        obj_path = self.obj_paths[idx]
+        
+        parts = obj_path.parts
+        class_id = parts[-2]
+        label = torch.tensor(self.class_ids.index(class_id)).long()
+        
+        view_idxs = np.sort(np.random.choice(24, self.num_views, replace=False))
+        view_files_names = [f"00{id:02d}.png" for id in view_idxs]
         
         
-        
-        
-        label = torch.tensor(self.class_ids.index(file_path.stem.split("_")[0])).long()
-        # Randomly sample `num_views` from the 24 available views
-        view_ids = np.sort(np.random.choice(24, self.num_views, replace=False))
-        views_selected = views[view_ids]
-
-        views_selected = torch.from_numpy(views_selected)
-        ray_grids = self.precomputed_ray_grids[view_ids]
-        
-        
+        views = [decode_image(obj_path.joinpath('image').joinpath(vfn)) for vfn in view_files_names]
 
         # Apply transformations if provided
         if self.transform:
-            views_selected = torch.stack([self.transform(view) for view in views_selected])
+            views = torch.stack([self.transform(view) for view in views], dim=0)
+            
+        ray_grids = compute_ray_grids_for_views(obj_path.joinpath('cameras.npz'), H=self.img_size[0],
+                                                W=self.img_size[1], views_idx=view_idxs, use_canonical=True)
+        # ray_grids = compute_ray_grids(obj_path.joinpath('cameras.npz'), H=self.img_size[0], W=self.img_size[1], use_canonical=True)
+        
+        # check_ray_grid_with_pointcloud(obj_path.joinpath('cameras.npz'), obj_path.joinpath('pointcloud.npz'), ray_grids, view_idx=0,
+        #                                         H=self.img_size[0],
+        #                                         W=self.img_size[1])
 
-        return views_selected, ray_grids, label
+        return views, ray_grids, label
 
     def get_all_views(self, idx):
-        file_path = self.obj_paths[idx]
-        with np.load(file_path, mmap_mode='r') as data:
-            views = data['views'][:, :self.num_channels, :, :] # Shape: (24, C, H, W)
+        obj_path = self.obj_paths[idx]
         
-        label = torch.tensor(self.class_ids.index(file_path.stem.split("_")[0])).long()
+        parts = obj_path.parts
+        class_id = parts[-2]
+        label = torch.tensor(self.class_ids.index(class_id)).long()
         
-        views = torch.from_numpy(views)
+        view_ids = np.arange(0, 24)
+        view_files_names = [f"00{id:02d}.png" for id in view_ids]
+        views = [decode_image(obj_path.joinpath('image').joinpath(vfn)) for vfn in view_files_names]
+        
+        # Apply transformations if provided
         if self.transform:
-            views = torch.stack([self.transform(view) for view in views])
-        return views, self.precomputed_ray_grids , label
+            views = torch.stack([self.transform(view) for view in views], dim=0)
+            
+        ray_grids = compute_ray_grids(obj_path.joinpath('cameras.npz'), H=self.img_size[0], W=self.img_size[1], use_canonical=True)
+        
+        return views, ray_grids, label
+    
 
     def set_num_views(self, num_views):
         self.num_views = num_views
@@ -92,18 +106,14 @@ class ObjectDataset(Dataset):
     
     
     
-
-
-
 class NMR():
     
     def __init__(self,
                  data_dir:Path = Path('./data').absolute(),
                  batch_size:int = 32,
                  img_size:tuple = (32, 32),
-                 num_workers:int = 4,
+                 num_workers:int = 8,
                  num_views:int = 2,
-                 load_opacity:bool = False,
                  exclude_classes:list = [],
                  seed:int = 11) -> None:
         
@@ -111,22 +121,22 @@ class NMR():
         
         if not data_dir.exists():
             raise RuntimeError("The data directory does not exist!")
-        dataset_dir = data_dir.joinpath(Path('NMR'))
-        dataset_dir.mkdir(exist_ok=True)
-        self.dataset_dir = dataset_dir
+        dataset_base_dir = data_dir.joinpath(Path('NMR'))
+        dataset_base_dir.mkdir(exist_ok=True)
+        self.dataset_base_dir = dataset_base_dir
+        
+        objects_base_dir = self.dataset_base_dir.joinpath(Path('NMR_Dataset'))
+        self.objects_base_dir= objects_base_dir
         
         self._download_dataset()
         
-        objects_dir = self.dataset_dir.joinpath(Path('objects'))
-        objects_dir.mkdir(exist_ok=True)
-        self.objects_dir= objects_dir
+        
 
         
         self.batch_size = batch_size
         self.img_size = img_size
         self.num_views = num_views
         self.num_workers = num_workers
-        self.num_channels = 4 if load_opacity else 3
 
         self.seed = seed
         
@@ -159,19 +169,21 @@ class NMR():
         self.elevation = 30.
         self.distance = 2.732
         
-        self.dataset_mean = (0.09258475, 0.09884189, 0.10409881, 0.17108302) # RGBA
-        self.dataset_std = (0.21175679, 0.22688305, 0.24043436, 0.36608162) # RGBA
+        # self.dataset_mean = (0.09258475, 0.09884189, 0.10409881, 0.17108302) # RGBA
+        # self.dataset_std = (0.21175679, 0.22688305, 0.24043436, 0.36608162) # RGBA
+        self.dataset_mean = (0.90754463, 0.90124703, 0.89597464) # RGB
+        self.dataset_std = (0.21146126, 0.22668979, 0.24028395) # RGB
         
         transformations = [
             transforms.Resize(img_size),
             transforms.ToImage(),                       # Convert PIL Image/NumPy to tensor
             transforms.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0] and set dtype
-            transforms.Normalize(self.dataset_mean[:self.num_channels], self.dataset_std[:self.num_channels]) # Values Specific to NMR calculated from all splits
+            transforms.Normalize(self.dataset_mean, self.dataset_std) # Values Specific to NMR calculated from all splits
         ]
         self.transformations = transforms.Compose(transformations)
         
 
-        self._preprocess_data()
+        self._build_datasets()
         self._init_loaders()
         
     
@@ -194,10 +206,13 @@ class NMR():
         Assumes the input is a normalized tensor with shape [B, C, H, W].
         The mean and std should be lists or tensors of length equal to the number of channels.
         """
-        mean = torch.tensor(self.dataset_mean[:self.num_channels]).view(1, -1, 1, 1)  # Reshape to [1, C, 1, 1] for broadcasting
-        std = torch.tensor(self.dataset_std[:self.num_channels]).view(1, -1, 1, 1)    # Reshape to [1, C, 1, 1] for broadcasting
+        mean = torch.tensor(self.dataset_mean).view(1, -1, 1, 1)  # Reshape to [1, C, 1, 1] for broadcasting
+        std = torch.tensor(self.dataset_std).view(1, -1, 1, 1)    # Reshape to [1, C, 1, 1] for broadcasting
         batch_tensor = batch_tensor * std + mean     # Apply channel-wise denormalization
         return torch.clip(batch_tensor, 0, 1)        # Clip values to [0, 1]
+    
+    def get_label_tag(self, label_idx):
+        return self.CLASS_IDS_MAP[self.CLASS_IDS[label_idx]]
     
     def _init_loaders(self):
         self.train_loader = self._build_dataloader(self.train_set)
@@ -209,77 +224,126 @@ class NMR():
         return dataloader
     
         
-    def _preprocess_data(self):
-        self._split_views_to_files()
-        
+    def _build_datasets(self):
         self.train_set = ObjectDataset(self._get_split_paths('train'), self.CLASS_IDS, self.img_size,
-                                       self.transformations, num_views=self.num_views, num_channels=self.num_channels)
+                                       self.transformations, num_views=self.num_views)
         self.val_set = ObjectDataset(self._get_split_paths('val'), self.CLASS_IDS, self.img_size,
-                                     self.transformations, num_views=self.num_views, num_channels=self.num_channels)
+                                     self.transformations, num_views=self.num_views)
         self.test_set = ObjectDataset(self._get_split_paths('test'), self.CLASS_IDS, self.img_size,
-                                      self.transformations, num_views=self.num_views, num_channels=self.num_channels)
+                                      self.transformations, num_views=self.num_views)
+
 
     def _get_split_paths(self, split):
-        paths = sorted(self.objects_dir.glob(f"*_{split}_*.npz"))  # Matches {class_id}_{split}_{obj_id}.npz
-        filtered_paths = [
-            path for path in paths
-            if path.stem.split("_")[0] in self.CLASS_IDS
-        ]
-        return filtered_paths
-        
-    
-    def _split_views_to_files(self):
-        if self.objects_dir.is_dir() and not any( self.objects_dir.iterdir()): 
-            mesh_dir = self.dataset_dir / Path('mesh_reconstruction')
+        all_objects_paths = []
+        for class_id in self.CLASS_IDS:
+            base_class_path = self.objects_base_dir.joinpath(Path(class_id))
+            with open(os.path.join(base_class_path, f'softras_{split}.lst')) as f:
+                objects_ids = f.readlines()
+            objects_ids = [obj_id.rstrip() for obj_id in objects_ids if len(obj_id) > 1]
+            objects_paths = [base_class_path.joinpath(object_id) for object_id in objects_ids]
+            all_objects_paths.extend(objects_paths)
             
-            # Variables for moving average (per channel)
-            total_images = 0
-            running_mean = np.zeros(4)  # 4 channels
-            running_var = np.zeros(4)  # 4 channels
-            
-            for split in ['train', 'val', 'test']:
-                for npz_file in tqdm.tqdm(mesh_dir.glob(f'*_{split}_images.npz'), desc=f"Processing {split} set..."):
-                    class_id = npz_file.stem.split('_')[0]
-                    with np.load(npz_file) as data:
-                        
-                        all_objects = data['arr_0']  # Shape: (num_objects, 24, C, H, W)
-                        
-                        for obj_id, views in enumerate(all_objects):
-                            
-                            # # Calculate mean and std for current object's views without modifying data
-                            # views_normalized = views / 255.0  # Normalize to [0, 1] for statistics
-                            # obj_mean = np.mean(views_normalized, axis=(0, 2, 3))  # Per channel mean
-                            # obj_var = np.var(views_normalized, axis=(0, 2, 3))    # Per channel variance
-                            
-                            # # Update global moving mean and variance
-                            # num_views = 24  # 24 views per object * num_objects
-                            # delta = obj_mean - running_mean
-                            # total_images += num_views
-                            # running_mean += delta * (num_views / total_images)
-                            # running_var += (num_views * obj_var + delta**2 * (num_views * (total_images - num_views) / total_images))
-                            
-                            output_path = self.objects_dir / f"{class_id}_{split}_{obj_id}.npz"
-                            np.savez_compressed(output_path, views=views)
-
-            # # Finalize std calculation
-            # dataset_std = np.sqrt(running_var / total_images)
-            # dataset_mean = running_mean
-            print(f"Finished splitting objects. Output saved to {self.objects_dir}")
-            # print(f"Dataset statistics: Mean = {dataset_mean}   std = {dataset_std}")
-        else:
-            print(f"Objects already processed! {self.objects_dir}")
+        return all_objects_paths
         
-    
+        
     def _download_dataset(self):
-        zip_file_path = self.dataset_dir.joinpath(Path('NMR_data.zip'))
+        zip_file_path = self.dataset_base_dir.joinpath(Path('NMR_Dataset.zip'))
         if zip_file_path.exists():
             print('Dataset already downloaded!')
-            return
+        else:
+            try:
+                url = "https://s3.eu-central-1.amazonaws.com/avg-projects/differentiable_volumetric_rendering/data/NMR_Dataset.zip"
+                print("Starting download...")
+                misc_utils.download_file_fast(url, zip_file_path.absolute())
+                
+            except Exception as e:
+                raise RuntimeError(f"Failed to download the dataset: {e}")
+        if self.objects_base_dir.exists():
+            print("Dataset already extracted!")
+        else:
+            try:
+                print("Extracting the file...")
+                self.objects_base_dir.mkdir(exist_ok=False)
+                misc_utils.extract_zip_multithreaded(zip_file_path.absolute(), self.dataset_base_dir.absolute())
+                print(f"Extraction completed. Files are available in: {self.objects_base_dir}")
+            except Exception as e:
+                shutil.rmtree(self.objects_base_dir)
+                raise RuntimeError(f"Failed to extraxt the dataset: {e}")
     
-        try:
-            google_drive_link = 'https://drive.google.com/uc?id=1fY9IWK7yEfLOmS3wUgeXM3NIivhoGhsg'
-            gdown.download(google_drive_link, str(zip_file_path), quiet=False)
-            with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-                zip_ref.extractall(self.dataset_dir)
-        except Exception as e:
-            raise RuntimeError(f"Failed to download or extract the dataset: {e}")
+    
+    
+    
+    # def _preprocess_data(self):
+    #     self._split_views_to_files()
+        
+    #     self.train_set = ObjectDataset(self._get_split_paths('train'), self.CLASS_IDS, self.img_size,
+    #                                    self.transformations, num_views=self.num_views)
+    #     self.val_set = ObjectDataset(self._get_split_paths('val'), self.CLASS_IDS, self.img_size,
+    #                                  self.transformations, num_views=self.num_views)
+    #     self.test_set = ObjectDataset(self._get_split_paths('test'), self.CLASS_IDS, self.img_size,
+    #                                   self.transformations, num_views=self.num_views)
+    
+    # def _get_split_paths(self, split):
+    #     paths = sorted(self.objects_dir.glob(f"*_{split}_*.npz"))  # Matches {class_id}_{split}_{obj_id}.npz
+    #     filtered_paths = [
+    #         path for path in paths
+    #         if path.stem.split("_")[0] in self.CLASS_IDS
+    #     ]
+    #     return filtered_paths
+    
+    # def _split_views_to_files(self):
+    #     if self.objects_dir.is_dir() and not any( self.objects_dir.iterdir()): 
+    #         mesh_dir = self.dataset_dir / Path('mesh_reconstruction')
+            
+    #         # Variables for moving average (per channel)
+    #         total_images = 0
+    #         running_mean = np.zeros(4)  # 4 channels
+    #         running_var = np.zeros(4)  # 4 channels
+            
+    #         for split in ['train', 'val', 'test']:
+    #             for npz_file in tqdm.tqdm(mesh_dir.glob(f'*_{split}_images.npz'), desc=f"Processing {split} set..."):
+    #                 class_id = npz_file.stem.split('_')[0]
+    #                 with np.load(npz_file) as data:
+                        
+    #                     all_objects = data['arr_0']  # Shape: (num_objects, 24, C, H, W)
+                        
+    #                     for obj_id, views in enumerate(all_objects):
+                            
+    #                         # # Calculate mean and std for current object's views without modifying data
+    #                         # views_normalized = views / 255.0  # Normalize to [0, 1] for statistics
+    #                         # obj_mean = np.mean(views_normalized, axis=(0, 2, 3))  # Per channel mean
+    #                         # obj_var = np.var(views_normalized, axis=(0, 2, 3))    # Per channel variance
+                            
+    #                         # # Update global moving mean and variance
+    #                         # num_views = 24  # 24 views per object * num_objects
+    #                         # delta = obj_mean - running_mean
+    #                         # total_images += num_views
+    #                         # running_mean += delta * (num_views / total_images)
+    #                         # running_var += (num_views * obj_var + delta**2 * (num_views * (total_images - num_views) / total_images))
+                            
+    #                         output_path = self.objects_dir / f"{class_id}_{split}_{obj_id}.npz"
+    #                         np.savez_compressed(output_path, views=views)
+
+    #         # # Finalize std calculation
+    #         # dataset_std = np.sqrt(running_var / total_images)
+    #         # dataset_mean = running_mean
+    #         print(f"Finished splitting objects. Output saved to {self.objects_dir}")
+    #         # print(f"Dataset statistics: Mean = {dataset_mean}   std = {dataset_std}")
+    #     else:
+    #         print(f"Objects already processed! {self.objects_dir}")
+        
+
+            
+    # def _download_dataset(self):
+    #     zip_file_path = self.dataset_dir.joinpath(Path('NMR_Dataset.zip'))
+    #     if zip_file_path.exists():
+    #         print('Dataset already downloaded!')
+    #         return
+    
+    #     try:
+    #         google_drive_link = 'https://drive.google.com/uc?id=1fY9IWK7yEfLOmS3wUgeXM3NIivhoGhsg'
+    #         gdown.download(google_drive_link, str(zip_file_path), quiet=False)
+    #         with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+    #             zip_ref.extractall(self.dataset_dir)
+    #     except Exception as e:
+    #         raise RuntimeError(f"Failed to download or extract the dataset: {e}")

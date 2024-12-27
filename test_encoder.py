@@ -29,13 +29,14 @@ if gpu == None:
 # Define hyperparameters
 img_size = (32, 32)
 num_classes = 13
-batch_size = 256
+batch_size = 64
 epochs = 40
 learning_rate = 0.0005
 
 
-nmr = NMR(img_size=img_size, num_views=1, batch_size=batch_size, num_workers=8, load_opacity=False)
-model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), latent_dim=num_classes, grid_condition_dim=120)
+nmr = NMR(img_size=img_size, num_views=1, batch_size=batch_size, num_workers=8)
+model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), z_dim=num_classes, c_dim=72, c_pos_emb_freq=6)
+model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), z_dim=num_classes, c_dim=None)
 
 train_loader = nmr.get_train_dataloader()
 val_loader = nmr.get_val_dataloader()
@@ -66,8 +67,8 @@ for epoch in range(epochs):
         
         # Enable autocast for forward pass
         with autocast('cuda'):
-            # outputs = model(inputs)
-            outputs = model(inputs, ray_grids)
+            outputs = model(inputs)
+            # outputs = model(inputs, ray_grids)
             loss = criterion(outputs, targets)
         
         # Scale loss and backpropagate
@@ -95,8 +96,8 @@ for epoch in range(epochs):
             ray_grids = ray_grids.squeeze(1)
             inputs, targets = inputs.to(gpu), targets.to(gpu)
             ray_grids = ray_grids.to(gpu)
-            # outputs = model(inputs)
-            outputs = model(inputs, ray_grids)
+            outputs = model(inputs)
+            # outputs = model(inputs, ray_grids)
             loss = criterion(outputs, targets)
 
             val_loss += loss.item()
@@ -120,8 +121,8 @@ with torch.no_grad():
         ray_grids = ray_grids.squeeze(1)
         inputs, targets = inputs.to(gpu), targets.to(gpu)
         ray_grids = ray_grids.to(gpu)
-        # outputs = model(inputs)
-        outputs = model(inputs, ray_grids)
+        outputs = model(inputs)
+        # outputs = model(inputs, ray_grids)
         loss = criterion(outputs, targets)
 
         val_loss += loss.item()

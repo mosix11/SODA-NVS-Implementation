@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 def plot_multiple_views(views, label):
     # Plot all 24 views in a grid
-    num_views = views.shape[0]
+    num_views = len(views)
     cols = 6  # Set the number of columns
     rows = int(np.ceil(num_views / cols))
 

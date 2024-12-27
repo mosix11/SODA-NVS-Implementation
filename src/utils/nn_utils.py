@@ -232,5 +232,57 @@ def calculate_ouput_dim(net, input_dim=None):
     return output.shape
 
 
+
+def cosine_warmup_lr(epoch, base_lr, warmup_epochs, total_epochs):
+    """
+    Compute learning rate with a linear warmup followed by cosine decay.
+    
+    Args:
+        epoch (int): Current epoch.
+        base_lr (float): Base learning rate.
+        warmup_epochs (int): Number of warmup epochs.
+        total_epochs (int): Total number of epochs.
+
+    Returns:
+        float: Adjusted learning rate.
+    """
+    if epoch < warmup_epochs:
+        return base_lr * (epoch + 1) / warmup_epochs
+    else:
+        # Cosine decay after warmup
+        progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+        return 0.5 * base_lr * (1 + np.cos(np.pi * progress))
+
+def exponential_warmup_lr(epoch, base_lr, warmup_epochs):
+    """
+    Compute learning rate with exponential warmup.
+
+    Args:
+        epoch (int): Current epoch.
+        base_lr (float): Base learning rate.
+        warmup_epochs (int): Number of warmup epochs.
+
+    Returns:
+        float: Adjusted learning rate.
+    """
+    if epoch < warmup_epochs:
+        return base_lr * (np.exp(epoch / warmup_epochs) - 1) / (np.e - 1)
+    return base_lr
+
+def linear_warmup_lr(epoch, base_lr, warmup_epochs):
+    """
+    Compute learning rate with linear warmup.
+
+    Args:
+        epoch (int): Current epoch.
+        base_lr (float): Base learning rate.
+        warmup_epochs (int): Number of warmup epochs.
+
+    Returns:
+        float: Adjusted learning rate.
+    """
+    if epoch < warmup_epochs:
+        return base_lr * (epoch + 1) / warmup_epochs
+    return base_lr
     
     

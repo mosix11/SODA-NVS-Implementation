@@ -15,6 +15,9 @@ import hashlib
 import tarfile
 import zipfile
 
+import zipfile
+import shutil
+from multiprocessing import cpu_count
 
 
 
@@ -27,6 +30,35 @@ def img_is_color(img):
             return True
 
     return False
+
+
+def download_file_fast(url, output_path):
+    """Downloads a file with a progress bar and handles retries."""
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    response = requests.get(url, stream=True, headers=headers)
+    total_size = int(response.headers.get('content-length', 0))
+    chunk_size = 1024 * 1024  # 1MB chunks
+
+    with open(output_path, 'wb') as file, tqdm(
+        desc=f"Downloading {os.path.basename(output_path)}",
+        total=total_size,
+        unit='B',
+        unit_scale=True,
+        unit_divisor=1024,
+    ) as bar:
+        for data in response.iter_content(chunk_size=chunk_size):
+            file.write(data)
+            bar.update(len(data))
+            
+def extract_zip_multithreaded(zip_path, extract_to):
+    """Extracts a zip file using the maximum number of available threads."""
+    # Check if p7zip is installed
+    if shutil.which("7z") is None:
+        raise EnvironmentError("7z command-line utility is required for multi-threaded extraction. Install p7zip.")
+
+    # Run the extraction with maximum threads
+    command = f"7z x -o{extract_to} {zip_path} -mmt{cpu_count()}"
+    os.system(command)
 
 
 def download_file(url, saving_path, name):
