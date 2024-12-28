@@ -18,17 +18,36 @@ import sys
 from pathlib import Path
 import shutil
 
+from functools import partial
+
 import tqdm
 from ..utils import misc_utils
 
 from .camera_utils import compute_ray_grids, compute_ray_grids_for_views, check_ray_grid_with_pointcloud
 
+
+class SourceTargetDataset(Dataset):
+    def __init__(self, source_ds, target_ds):
+        self.source_ds = source_ds
+        self.target_ds = target_ds
+
+    def __getitem__(self, index):
+        views_s, cond_s, labels_s = self.source_ds.__getitem__(index)
+        views_t, cond_t, labels_t = self.target_ds.__getitem__(index)
+        assert labels_s == labels_t
+        return (views_s, cond_s, labels_s), (views_t, cond_t, labels_t)
+
+    def __len__(self):
+        l1 = self.source_ds.__len__()
+        l2 = self.target_ds.__len__()
+        assert l1 == l2
+        return l1
+
 class ObjectDataset(Dataset):
-    def __init__(self, obj_paths, class_ids, img_size = (32, 32), source_transform=None, target_transform=None, num_views=2) -> None:
+    def __init__(self, obj_paths, class_ids, img_size = (32, 32), transform=None, num_views=2) -> None:
         self.obj_paths = obj_paths
         self.img_size = img_size
-        self.source_transform = source_transform
-        self.target_transform = target_transform
+        self.transform = transform
         self.num_views = num_views
         self.class_ids = class_ids
         
@@ -68,9 +87,8 @@ class ObjectDataset(Dataset):
         views = [decode_image(obj_path.joinpath('image').joinpath(vfn)) for vfn in view_files_names]
 
         # Apply transformations if provided
-        if self.source_transform and self.target_transform:
-            views = [self.source_transform(view) for view in views[:-1]] + [self.target_transform(views[-1])]
-            views = torch.stack(views, dim=0)
+        if self.transform:
+            views = torch.stack([self.transform(view) for view in views], dim=0)
             
             
         ray_grids = compute_ray_grids_for_views(obj_path.joinpath('cameras.npz'), H=self.img_size[0],
@@ -83,7 +101,7 @@ class ObjectDataset(Dataset):
 
         return views, ray_grids, label
 
-    def get_all_views(self, idx, transform:str='src'):
+    def get_all_views(self, idx):
         obj_path = self.obj_paths[idx]
         
         parts = obj_path.parts
@@ -95,10 +113,8 @@ class ObjectDataset(Dataset):
         views = [decode_image(obj_path.joinpath('image').joinpath(vfn)) for vfn in view_files_names]
         
         # Apply transformations if provided
-        if transform == 'src' and self.source_transform:
-            views = torch.stack([self.source_transform(view) for view in views], dim=0)
-        elif transform == 'trgt' and self.target_transform:
-            views = torch.stack([self.target_transform(view) for view in views], dim=0)
+        if self.transform:
+            views = torch.stack([self.transform(view) for view in views], dim=0)
             
         ray_grids = compute_ray_grids(obj_path.joinpath('cameras.npz'), H=self.img_size[0], W=self.img_size[1], use_canonical=True)
         
@@ -179,13 +195,21 @@ class NMR():
         self.dataset_mean = (0.90754463, 0.90124703, 0.89597464) # RGB
         self.dataset_std = (0.21146126, 0.22668979, 0.24028395) # RGB
         
-        transformations = [
+        encoder_transformations = [
             transforms.Resize(img_size),
             transforms.ToImage(),                       # Convert PIL Image/NumPy to tensor
             transforms.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0] and set dtype
             transforms.Normalize(self.dataset_mean, self.dataset_std) # Values Specific to NMR calculated from all splits
         ]
-        self.transformations = transforms.Compose(transformations)
+        self.encoder_transformations = transforms.Compose(encoder_transformations)
+        
+        denoiser_transformations = [
+            transforms.Resize(img_size),
+            transforms.ToImage(),                       # Convert PIL Image/NumPy to tensor
+            transforms.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0] and set dtype
+            transforms.Lambda(lambda x: x * 2 - 1),         # Scale [0, 1] to [-1, 1]
+        ]
+        self.denoizer_transformation = transforms.Compose(denoiser_transformations)
         
 
         self._build_datasets()
@@ -230,12 +254,24 @@ class NMR():
     
         
     def _build_datasets(self):
-        self.train_set = ObjectDataset(self._get_split_paths('train'), self.CLASS_IDS, self.img_size,
-                                       self.transformations, num_views=self.num_views)
-        self.val_set = ObjectDataset(self._get_split_paths('val'), self.CLASS_IDS, self.img_size,
-                                     self.transformations, num_views=self.num_views)
-        self.test_set = ObjectDataset(self._get_split_paths('test'), self.CLASS_IDS, self.img_size,
-                                      self.transformations, num_views=self.num_views)
+        train_split_paths = self._get_split_paths('train')
+        val_split_paths = self._get_split_paths('val')
+        test_split_paths = self._get_split_paths('test')
+        
+        ObjectDatasetPartial = partial(ObjectDataset, class_ids=self.CLASS_IDS, img_size=self.img_size, num_views=self.num_views)
+        
+        train_source_ds = ObjectDatasetPartial(obj_paths=train_split_paths, transform=self.encoder_transformations)
+        train_target_ds = ObjectDatasetPartial(obj_paths=train_split_paths, transform=self.denoizer_transformation)
+        
+        val_source_ds = ObjectDatasetPartial(obj_paths=val_split_paths, transform=self.encoder_transformations)
+        val_target_ds = ObjectDatasetPartial(obj_paths=val_split_paths, transform=self.denoizer_transformation)
+        
+        test_source_ds = ObjectDatasetPartial(obj_paths=test_split_paths, transform=self.encoder_transformations)
+        test_target_ds = ObjectDatasetPartial(obj_paths=test_split_paths, transform=self.denoizer_transformation)
+        
+        self.train_set = SourceTargetDataset(train_source_ds, train_target_ds)
+        self.val_set = SourceTargetDataset(val_source_ds, val_target_ds)
+        self.test_set = SourceTargetDataset(test_source_ds, test_target_ds)
 
 
     def _get_split_paths(self, split):
