@@ -24,10 +24,11 @@ from ..utils import misc_utils
 from .camera_utils import compute_ray_grids, compute_ray_grids_for_views, check_ray_grid_with_pointcloud
 
 class ObjectDataset(Dataset):
-    def __init__(self, obj_paths, class_ids, img_size = (32, 32), transform=None, num_views=2) -> None:
+    def __init__(self, obj_paths, class_ids, img_size = (32, 32), source_transform=None, target_transform=None, num_views=2) -> None:
         self.obj_paths = obj_paths
         self.img_size = img_size
-        self.transform = transform
+        self.source_transform = source_transform
+        self.target_transform = target_transform
         self.num_views = num_views
         self.class_ids = class_ids
         
@@ -67,8 +68,10 @@ class ObjectDataset(Dataset):
         views = [decode_image(obj_path.joinpath('image').joinpath(vfn)) for vfn in view_files_names]
 
         # Apply transformations if provided
-        if self.transform:
-            views = torch.stack([self.transform(view) for view in views], dim=0)
+        if self.source_transform and self.target_transform:
+            views = [self.source_transform(view) for view in views[:-1]] + [self.target_transform(views[-1])]
+            views = torch.stack(views, dim=0)
+            
             
         ray_grids = compute_ray_grids_for_views(obj_path.joinpath('cameras.npz'), H=self.img_size[0],
                                                 W=self.img_size[1], views_idx=view_idxs, use_canonical=True)
@@ -80,7 +83,7 @@ class ObjectDataset(Dataset):
 
         return views, ray_grids, label
 
-    def get_all_views(self, idx):
+    def get_all_views(self, idx, transform:str='src'):
         obj_path = self.obj_paths[idx]
         
         parts = obj_path.parts
@@ -92,8 +95,10 @@ class ObjectDataset(Dataset):
         views = [decode_image(obj_path.joinpath('image').joinpath(vfn)) for vfn in view_files_names]
         
         # Apply transformations if provided
-        if self.transform:
-            views = torch.stack([self.transform(view) for view in views], dim=0)
+        if transform == 'src' and self.source_transform:
+            views = torch.stack([self.source_transform(view) for view in views], dim=0)
+        elif transform == 'trgt' and self.target_transform:
+            views = torch.stack([self.target_transform(view) for view in views], dim=0)
             
         ray_grids = compute_ray_grids(obj_path.joinpath('cameras.npz'), H=self.img_size[0], W=self.img_size[1], use_canonical=True)
         

@@ -12,7 +12,7 @@ class SodaEncoder(nn.Module):
                  img_shape:tuple = (3, 32, 32),
                  z_dim:int = 128,
                  c_dim:int = None,
-                 c_pos_emb_freq:int = 10,
+                 c_pos_emb_freq:int = 6,
                  ) -> None :
         
         

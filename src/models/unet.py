@@ -10,7 +10,7 @@ from .blocks import DownsampleResBlock, UpsampleResBlock, ResAttBlock, MiddleBlo
 
 class UNet(nn.Module):
     def __init__(self, 
-                 img_shape = [3, 64, 64], 
+                 img_shape = (3, 32, 32), 
                  n_channels = 128,
                  ch_mults = (1, 2, 2, 2),
                  is_attn = (False, True, False, False),
@@ -21,6 +21,7 @@ class UNet(nn.Module):
                  t_dim = 512,
                  z_dim = 128,
                  c_dim = None,
+                 c_pos_emb_freq:int = 6,
                  self_attention_type = 'nromal'
                  ):
         """
@@ -42,7 +43,7 @@ class UNet(nn.Module):
         
         
         if c_dim:
-            self.c_emb = PoseEmbedding(num_freqs=10)
+            self.c_emb = PoseEmbedding(num_freqs=c_pos_emb_freq)
             # Linear
             self.rgb_linear_projector = nn.Conv2d(img_shape[0], n_channels, kernel_size=1)
             self.image_proj = nn.Conv2d(n_channels + c_dim, n_channels, kernel_size=3, padding=1)
@@ -109,9 +110,9 @@ class UNet(nn.Module):
         self.final = nn.Conv2d(out_channels, img_shape[0], kernel_size=3, padding=1)
         
         
-    def forward(self, x, t, z, drop_mask, grid_condition=None, ret_activation=False):
+    def forward(self, x, t, z, drop_mask, c=None, ret_activation=False):
         if not ret_activation:
-            return self.forward_core(x, t, z, drop_mask)
+            return self.forward_core(x, t, z, drop_mask, c)
 
         activation = {}
         def namedHook(name):
@@ -126,7 +127,7 @@ class UNet(nn.Module):
                 name = f'out_{no}'
                 hooks[name] = blk.register_forward_hook(namedHook(name))
 
-        result = self.forward_core(x, t, z, drop_mask, grid_condition)
+        result = self.forward_core(x, t, z, drop_mask, c)
         for name in hooks:
             hooks[name].remove()
         return result, activation
@@ -143,7 +144,7 @@ class UNet(nn.Module):
         t = self.time_emb(t)
         z = self.z_emb(z, drop_mask)
         if c is not None:
-            c = self.grid_cond_emb(c)
+            c = self.c_emb(c)
             c = c.permute(0, 3, 1, 2)
             x = self.rgb_linear_projector(x)
             x = self.image_proj(torch.cat((x, c), dim=1))

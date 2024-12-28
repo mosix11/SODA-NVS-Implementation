@@ -199,7 +199,7 @@ class SODATrainer():
             c_source = c_source.squeeze(1)
             x_target = x_target.squeeze(1)
             c_target = c_target.squeeze(1)
-            
+
             loss = self.model.training_step(x_source, x_target, c_source, c_target, self.use_amp)
             # Scale loss and backpropagate
             self.grad_scaler.scale(loss).backward()

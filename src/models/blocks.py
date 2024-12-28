@@ -20,7 +20,7 @@ class Upsample(nn.Module):
     def __init__(self, n_channels, use_conv=True):
         super().__init__()
         self.use_conv = use_conv
-        self.up = nn.Upsample(scale_factor = 2, mode = 'nearest'),
+        self.up = nn.Upsample(scale_factor = 2, mode = 'nearest')
         if use_conv:
             self.conv = nn.Conv2d(n_channels, n_channels, kernel_size=3, stride=1, padding=1)
 
@@ -201,7 +201,7 @@ class TimeEmbedding(nn.Module):
     def forward(self, t):
         # Create sinusoidal position embeddings (same as those from the transformer)
         half_dim = self.n_channels // 8
-        emb = torch.log(10_000) / (half_dim - 1)
+        emb = torch.log(torch.tensor(10_000)) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, dtype=torch.float32, device=t.device) * -emb)
         emb = t.float()[:, None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=1)
@@ -281,7 +281,7 @@ class PoseEmbedding(nn.Module):
         D = orig_shape[-1]  # last dimension is the coordinate dimension
 
         # 2) Flatten everything except the last dimension
-        x_flat = x.view(-1, D)  # shape (N, D)
+        x_flat = x.reshape(-1, D)  # shape (N, D)
         n = x_flat.shape[0]     # number of flattened elements
 
         # 3) Create frequency multipliers [1, 2, 4, ..., 2^(num_freqs-1)]

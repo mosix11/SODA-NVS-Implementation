@@ -16,7 +16,7 @@ class SODA(nn.Module):
                  enc_img_shape:tuple = (3, 32, 32),
                  z_dim:int = 128,
                  c_dim:int = None,
-                 c_pos_emb_freq:int = 10,
+                 c_pos_emb_freq:int = 6,
                  
                  dec_img_shape:tuple = (3, 32, 32),
                  dec_dropout:float = 0.1,
@@ -25,7 +25,8 @@ class SODA(nn.Module):
                  beta_schedule:str = 'inverted',
                  T:int = 1000,
                  t_dim:int = 512,
-                 condition_drop_prob:float = 0.1
+                 z_drop_prob:float = 0.12,
+                #  c_drop_prob:float = 0.1,
                  )->None:
         ''' SODA proposed by "SODA: Bottleneck Diffusion Models for Representation Learning", and \
             DDPM proposed by "Denoising Diffusion Probabilistic Models", as well as \
@@ -60,14 +61,19 @@ class SODA(nn.Module):
                             t_dim=t_dim,
                             z_dim=z_dim,
                             c_dim=c_dim,
+                            c_pos_emb_freq=c_pos_emb_freq,
                             self_attention_type=self_att_type
                             )
+        
+        self.enc_img_shape = enc_img_shape
+        self.dec_img_shape = dec_img_shape
         
         self.ddpm_sche = get_schedule(beta_schedule, T, 'DDPM')
         self.ddim_sche = get_schedule(beta_schedule, T, 'DDIM')
         
         self.T = T
-        self.condition_drop_prob = condition_drop_prob
+        self.z_drop_prob = z_drop_prob
+        self.c_drop_prob = c_drop_prob
         self.loss = nn.MSELoss()
         
         self.device = torch.device('cpu')
@@ -114,11 +120,15 @@ class SODA(nn.Module):
         
     def training_step(self, x_source, x_target, c_source=None, c_target=None, use_amp=False):
         x_recon, noise = self(x_source, x_target, c_source, c_target, use_amp)
-        return self.loss(noise, x_recon)
+        with autocast('cuda', enabled=use_amp):
+            loss = self.loss(noise, x_recon)
+        return loss
     
     def validation_step(self, x_source, x_target, c_source=None, c_target=None, use_amp=False):
         x_recon, noise = self(x_source, x_target, c_source, c_target, use_amp)
-        return self.loss(noise, x_recon)
+        with autocast('cuda', enabled=use_amp):
+            loss = self.loss(noise, x_recon)
+        return loss
         
     def forward(self, x_source, x_target, c_source=None, c_target=None, use_amp=False):
         ''' Training with simple noise prediction loss.
@@ -135,7 +145,7 @@ class SODA(nn.Module):
         x_noised, t, noise = self.perturb(x_target, t=None)
 
         # 0 for conditional, 1 for unconditional
-        mask = torch.bernoulli(torch.zeros(x_noised.shape[0]) + self.condition_drop_prob).to(self.device)
+        mask = torch.bernoulli(torch.zeros(x_noised.shape[0]) + self.z_drop_prob).to(self.device)
         with autocast('cuda', enabled=use_amp):
             if self.use_encoder:
                 z = self.encoder(x_source, c_source)
@@ -152,12 +162,11 @@ class SODA(nn.Module):
         return z
     
     
-    def ddim_sample(self, n_sample, size, z_guide, c_cond, steps=100, eta=0.0, guide_w=0.3, notqdm=False, use_amp=False):
+    def ddim_sample(self, n_sample, z_guide, c_cond, steps=100, eta=0.0, guide_w=0.3, notqdm=False, use_amp=False):
         ''' Sampling with DDIM sampler. Actual NFE is `2 * steps`.
 
             Args:
                 n_sample: The batch size.
-                size: The image shape (e.g. `(3, 32, 32)`).
                 z_guide: The latent code extracted from real images (for guidance).
                 c_cond: Conditioning tensor for conditional generation.
                 steps: The number of total timesteps.
@@ -166,22 +175,23 @@ class SODA(nn.Module):
             Returns:
                 The sampled image tensor ranged in `[0, 1]`.
         '''
+        size = self.dec_img_shape
         sche = self.ddim_sche
-        model_args = self.prepare_condition_(n_sample, z_guide)
+        z_guide, mask = self.prepare_condition_(n_sample, z_guide)
         x_i = torch.randn(n_sample, *size).to(self.device)
 
-        times = torch.arange(0, self.n_T, self.n_T // steps) + 1
+        times = torch.arange(0, self.T, self.T // steps) + 1
         times = list(reversed(times.int().tolist())) + [0]
         time_pairs = list(zip(times[:-1], times[1:]))
         # e.g. [(801, 601), (601, 401), (401, 201), (201, 1), (1, 0)]
 
-        for time, time_next in tqdm(time_pairs, disable=notqdm):
-            t_is = torch.tensor([time / self.n_T]).to(self.device).repeat(n_sample)
+        for time, time_next in tqdm(time_pairs, disable=notqdm, desc="Sampling using DDIM"):
+            t_is = torch.tensor([time / self.T]).to(self.device).repeat(n_sample)
 
             z = torch.randn(n_sample, *size).to(self.device) if time_next > 0 else 0
 
             alpha = sche["alphabar_t"][time]
-            eps, x0_t = self.pred_eps_(x_i, t_is, model_args, guide_w, alpha, use_amp)
+            eps, x0_t = self.pred_eps_(x_i, t_is, z_guide, mask, c_cond, guide_w, alpha, use_amp)
             alpha_next = sche["alphabar_t"][time_next]
             c1 = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c2 = (1 - alpha_next - c1 ** 2).sqrt()
@@ -190,14 +200,14 @@ class SODA(nn.Module):
         return x_i
     
     
-    def pred_eps_(self, x, t, model_args, guide_w, alpha, use_amp, clip_x=True):
+    def pred_eps_(self, x, t, z, mask, c, guide_w, alpha, use_amp, clip_x=True):
         def pred_cfg_eps_double_batch():
             # double batch
             x_double = x.repeat(2, 1, 1, 1)
             t_double = t.repeat(2)
 
             with autocast('cuda', enabled=use_amp):
-                eps = self.decoder(x_double, t_double, *model_args).float()
+                eps = self.decoder(x_double, t_double, z, mask, c).float()
             n_sample = eps.shape[0] // 2
             eps1 = eps[:n_sample]
             eps2 = eps[n_sample:]
