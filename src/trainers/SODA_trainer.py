@@ -19,7 +19,9 @@ import datetime
 from pathlib import Path
 import time
 from tqdm import tqdm
+from functools import partial
 
+from ..metric import LinearProbe
 from ..utils import nn_utils, misc_utils
 
 class SODATrainer():
@@ -37,6 +39,9 @@ class SODATrainer():
                  beta2:float = 0.95,
                  grad_clip_norm:float = 1,
                  ema_decay:float = 0.9999,
+                 
+                 linear_prob_freq_e:int = 10,
+                 sampling_freq_e:int = 10,
                  
                  outputs_dir:Path = Path('./outputs'),
                  write_summary:bool = True,
@@ -61,6 +66,8 @@ class SODATrainer():
 
         self.max_epochs = max_epochs
         self.warmup_epochs = warmup_epochs
+        self.sampling_freq_e = sampling_freq_e if sampling_freq_e is not 0 or sampling_freq_e is not None else None
+        self.linear_prob_freq_e = linear_prob_freq_e if linear_prob_freq_e is not 0 or linear_prob_freq_e is not None else None
         
         self.optimizer_type = optimizer_type
         self.enc_lr = enc_lr
@@ -91,6 +98,7 @@ class SODATrainer():
         
         
     def setup_data_loaders(self, dataset):
+        self.dataset = dataset
         self.train_dataloader = dataset.get_train_dataloader()
         self.val_dataloader = dataset.get_val_dataloader()
         self.num_train_batches = len(self.train_dataloader)
@@ -142,6 +150,15 @@ class SODATrainer():
         self.optim = optim
         
         
+    def setup_metrics(self, dataset):
+        if self.linear_prob_freq_e:
+            self.linear_probe = LinearProbe(train_set=dataset.get_train_set().get_source_dataset(),
+                                            test_set=dataset.get_test_set().get_source_dataset(),
+                                            num_classes=dataset.get_num_classes(),
+                                            batch_size=2048,
+                                            epoch=15)
+        
+        
         
     def fit(self, SODA, dataset, resume=False):
         self.setup_data_loaders(dataset)
@@ -160,7 +177,7 @@ class SODATrainer():
             self.prepare_EMA(SODA)
             self.epoch = 0
 
-        
+        self.setup_metrics(dataset)
         
         self.grad_scaler = GradScaler('cuda', enabled=self.use_amp)
         self.avg_epoch_time = misc_utils.AverageMeter()
@@ -184,21 +201,14 @@ class SODATrainer():
         epoch_train_loss = misc_utils.AverageMeter()
         
         loss_ema = None
-        for i, batch in tqdm(enumerate(self.train_dataloader), total=self.num_train_batches, desc="Processing Training Epoch {}".format(self.epoch+1)):
+        for i, (source_batch, target_batch) in tqdm(enumerate(self.train_dataloader), total=self.num_train_batches, desc="Processing Training Epoch {}".format(self.epoch+1)):
             
-            views, ray_grids, classes = self.prepare_batch(batch)
+            x_source, c_source, labels_s = self.prepare_batch(source_batch)
+            x_target, c_target, labels_t = self.prepare_batch(target_batch)
             
-            num_views = views.shape[1]
             # if num_views == 1: views.squeeze(1); ray_grids.squeeze(1)
             
             self.optim.zero_grad()
-            
-            x_source, x_target = torch.split(views, [num_views-1, 1], dim=1)
-            c_source, c_target = torch.split(ray_grids, [num_views-1, 1], dim=1)
-            x_source = x_source.squeeze(1)
-            c_source = c_source.squeeze(1)
-            x_target = x_target.squeeze(1)
-            c_target = c_target.squeeze(1)
 
             loss = self.model.training_step(x_source, x_target, c_source, c_target, self.use_amp)
             # Scale loss and backpropagate
@@ -236,30 +246,38 @@ class SODATrainer():
             }, path)    
             
         # ******** Validation Part ********
-        if self.val_dataloader is not None and (self.epoch+1) % 5 == 0:
+        if self.val_dataloader is not None and (self.epoch+1) % 10 == 0:
         
             self.model.eval()
             val_loss = misc_utils.AverageMeter()
-            for i, batch in tqdm(enumerate(self.val_dataloader), total=self.num_val_batches, desc="Processing Validation Batches"):
-                views, ray_grids, classes = self.prepare_batch(batch)
-                num_views = views.shape[1]
-                x_source, x_target = torch.split(views, [num_views-1, 1], dim=1)
-                c_source, c_target = torch.split(ray_grids, [num_views-1, 1], dim=1)
-                x_source = x_source.squeeze(1)
-                c_source = c_source.squeeze(1)
-                x_target = x_target.squeeze(1)
-                c_target = c_target.squeeze(1)
+            for i, (source_batch, target_batch) in tqdm(enumerate(self.val_dataloader), total=self.num_val_batches, desc="Processing Validation Batches"):
+                x_source, c_source, labels_s = self.prepare_batch(source_batch)
+                x_target, c_target, labels_t = self.prepare_batch(target_batch)
                 
                 with torch.no_grad():
                     loss = self.model.validation_step(x_source, x_target, c_source, c_target, self.use_amp)
                 val_loss.update(loss.item())
                 
             print(f"Epoch{self.epoch + 1}/{self.max_epochs}, Training Loss: {val_loss.avg}")
+            if self.write_sum:
+                self.writer.add_scalar('Loss/Val', val_loss.avg, self.epoch)
+                
+        if self.linear_prob_freq_e and (self.epoch+1) % self.linear_prob_freq_e == 0:
+            self.model.eval()
+            feat_func = partial(self.ema.ema_model.encode, norm=True, use_amp=self.use_amp)
+            lp_acc = self.linear_probe.evaluate(feat_func, self.model.get_encoder().get_z_dim(), device=self.gpu)
+            self.writer.add_scalar('Metrics/Linear Probe', lp_acc, self.epoch)
+            print("LinearProbe accuracy =", lp_acc)
             
-            # ema_sample_method = self.ema.ema_model.ddim_sample
-            # self.ema.ema_model.eval()
+        if self.sampling_freq_e and (self.epoch+1) % self.sampling_freq_e == 0:
+            ema_sample_method = self.ema.ema_model.ddim_sample
+            self.ema.ema_model.eval()
+            sample_views, sample_rays, label = self.dataset.get_val_set().get_source_dataset().get_all_views(0)
+            sample_views = sample_views.unsqueeze(0)
+            sample_rays = sample_rays.unsqueeze(0)
+            
             # with torch.no_grad():
-            #     z_guide = self.ema.ema_model.encode(source[:opt.n_sample], norm=False, use_amp=use_amp)
+            #     z_guide = self.ema.ema_model.encode(vis_batch[:opt.n_sample], norm=False, use_amp=use_amp)
             #     x_gen = ema_sample_method(opt.n_sample, target.shape[1:], z_guide)
             # # save an image of currently generated samples (top rows)
             # # followed by real images (bottom rows)
@@ -268,5 +286,4 @@ class SODATrainer():
             # grid = make_grid(x_all, nrow=10)
             
             
-            if self.write_sum:
-                self.writer.add_scalar('Loss/Val', val_loss.avg, self.epoch)
+            

@@ -42,9 +42,15 @@ class SourceTargetDataset(Dataset):
         l2 = self.target_ds.__len__()
         assert l1 == l2
         return l1
+    
+    def get_source_dataset(self):
+        return self.source_ds
+    
+    def get_target_dataset(self):
+        return self.target_ds
 
 class ObjectDataset(Dataset):
-    def __init__(self, obj_paths, class_ids, img_size = (32, 32), transform=None, num_views=2) -> None:
+    def __init__(self, obj_paths, class_ids, img_size = (32, 32), transform=None, num_views=1) -> None:
         self.obj_paths = obj_paths
         self.img_size = img_size
         self.transform = transform
@@ -99,6 +105,9 @@ class ObjectDataset(Dataset):
         #                                         H=self.img_size[0],
         #                                         W=self.img_size[1])
 
+        if self.num_views == 1:
+            views = views.squeeze(0)
+            ray_grids = ray_grids.squeeze(0)
         return views, ray_grids, label
 
     def get_all_views(self, idx):
@@ -187,8 +196,7 @@ class NMR():
                 self.CLASS_IDS.remove(cls)
                 self.CLASS_IDS_MAP.pop(cls, None)
 
-        self.elevation = 30.
-        self.distance = 2.732
+        self.num_classes = len(self.CLASS_IDS)
         
         # self.dataset_mean = (0.09258475, 0.09884189, 0.10409881, 0.17108302) # RGBA
         # self.dataset_std = (0.21175679, 0.22688305, 0.24043436, 0.36608162) # RGBA
@@ -228,6 +236,17 @@ class NMR():
     def get_test_dataloader(self):
         return self.test_loader
     
+    def get_train_set(self):
+        return self.train_set
+    
+    def get_val_set(self):
+        return self.val_set
+    
+    def get_test_set(self):
+        return self.test_set
+    
+    def get_num_classes(self):
+        return self.num_classes
     
     def denormalize(self, batch_tensor):
         """
@@ -239,6 +258,8 @@ class NMR():
         std = torch.tensor(self.dataset_std).view(1, -1, 1, 1)    # Reshape to [1, C, 1, 1] for broadcasting
         batch_tensor = batch_tensor * std + mean     # Apply channel-wise denormalization
         return torch.clip(batch_tensor, 0, 1)        # Clip values to [0, 1]
+    
+    
     
     def get_label_tag(self, label_idx):
         return self.CLASS_IDS_MAP[self.CLASS_IDS[label_idx]]
@@ -258,16 +279,18 @@ class NMR():
         val_split_paths = self._get_split_paths('val')
         test_split_paths = self._get_split_paths('test')
         
-        ObjectDatasetPartial = partial(ObjectDataset, class_ids=self.CLASS_IDS, img_size=self.img_size, num_views=self.num_views)
+        ObjectDatasetPartial = partial(ObjectDataset, class_ids=self.CLASS_IDS, img_size=self.img_size)
+        num_source_views = self.num_views -1
+        num_target_views = 1
         
-        train_source_ds = ObjectDatasetPartial(obj_paths=train_split_paths, transform=self.encoder_transformations)
-        train_target_ds = ObjectDatasetPartial(obj_paths=train_split_paths, transform=self.denoizer_transformation)
+        train_source_ds = ObjectDatasetPartial(obj_paths=train_split_paths, transform=self.encoder_transformations, num_views=num_source_views)
+        train_target_ds = ObjectDatasetPartial(obj_paths=train_split_paths, transform=self.denoizer_transformation, num_views=num_target_views)
         
-        val_source_ds = ObjectDatasetPartial(obj_paths=val_split_paths, transform=self.encoder_transformations)
-        val_target_ds = ObjectDatasetPartial(obj_paths=val_split_paths, transform=self.denoizer_transformation)
+        val_source_ds = ObjectDatasetPartial(obj_paths=val_split_paths, transform=self.encoder_transformations, num_views=num_source_views)
+        val_target_ds = ObjectDatasetPartial(obj_paths=val_split_paths, transform=self.denoizer_transformation, num_views=num_target_views)
         
-        test_source_ds = ObjectDatasetPartial(obj_paths=test_split_paths, transform=self.encoder_transformations)
-        test_target_ds = ObjectDatasetPartial(obj_paths=test_split_paths, transform=self.denoizer_transformation)
+        test_source_ds = ObjectDatasetPartial(obj_paths=test_split_paths, transform=self.encoder_transformations, num_views=num_source_views)
+        test_target_ds = ObjectDatasetPartial(obj_paths=test_split_paths, transform=self.denoizer_transformation, num_views=num_target_views)
         
         self.train_set = SourceTargetDataset(train_source_ds, train_target_ds)
         self.val_set = SourceTargetDataset(val_source_ds, val_target_ds)

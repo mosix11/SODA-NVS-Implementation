@@ -29,14 +29,14 @@ if gpu == None:
 # Define hyperparameters
 img_size = (32, 32)
 num_classes = 13
-batch_size = 64
+batch_size = 32
 epochs = 40
 learning_rate = 0.0005
 
 
-nmr = NMR(img_size=img_size, num_views=1, batch_size=batch_size, num_workers=8)
-model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), z_dim=num_classes, c_dim=72, c_pos_emb_freq=6)
-model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), z_dim=num_classes, c_dim=None)
+nmr = NMR(img_size=img_size, num_views=2, batch_size=batch_size, num_workers=8)
+model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), z_dim=num_classes, c_dim=288, c_pos_emb_freq=24)
+# model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), z_dim=num_classes, c_dim=None)
 
 train_loader = nmr.get_train_dataloader()
 val_loader = nmr.get_val_dataloader()
@@ -56,19 +56,20 @@ for epoch in range(epochs):
     correct = 0
     total = 0
 
-    for inputs, ray_grids, targets in train_loader:
+    for source_batch, target_batch in train_loader:
         
-        inputs = inputs.squeeze(1)
-        ray_grids = ray_grids.squeeze(1)
-        inputs, targets = inputs.to(gpu), targets.to(gpu)
-        ray_grids = ray_grids.to(gpu)
+        views_s, conds_s, labels_s = source_batch
+        views_t, conds_t, labels_t = target_batch
+
+        inputs, targets = views_s.to(gpu), labels_s.to(gpu)
+        ray_grids = conds_s.to(gpu)
         
         optimizer.zero_grad()
         
         # Enable autocast for forward pass
         with autocast('cuda'):
-            outputs = model(inputs)
-            # outputs = model(inputs, ray_grids)
+            # outputs = model(inputs)
+            outputs = model(inputs, ray_grids)
             loss = criterion(outputs, targets)
         
         # Scale loss and backpropagate
@@ -91,13 +92,16 @@ for epoch in range(epochs):
     correct = 0
     total = 0
     with torch.no_grad():
-        for inputs, ray_grids, targets in val_loader:
-            inputs = inputs.squeeze(1)
-            ray_grids = ray_grids.squeeze(1)
-            inputs, targets = inputs.to(gpu), targets.to(gpu)
-            ray_grids = ray_grids.to(gpu)
-            outputs = model(inputs)
-            # outputs = model(inputs, ray_grids)
+        for source_batch, target_batch in val_loader:
+        
+            views_s, conds_s, labels_s = source_batch
+            views_t, conds_t, labels_t = target_batch
+            
+            inputs, targets = views_s.to(gpu), labels_s.to(gpu)
+            ray_grids = conds_s.to(gpu)
+            
+            # outputs = model(inputs)
+            outputs = model(inputs, ray_grids)
             loss = criterion(outputs, targets)
 
             val_loss += loss.item()
@@ -116,13 +120,16 @@ val_loss = 0.0
 correct = 0
 total = 0
 with torch.no_grad():
-    for inputs, ray_grids, targets in test_loader:
-        inputs = inputs.squeeze(1)
-        ray_grids = ray_grids.squeeze(1)
-        inputs, targets = inputs.to(gpu), targets.to(gpu)
-        ray_grids = ray_grids.to(gpu)
-        outputs = model(inputs)
-        # outputs = model(inputs, ray_grids)
+    for source_batch, target_batch in val_loader:
+        
+        views_s, conds_s, labels_s = source_batch
+        views_t, conds_t, labels_t = target_batch
+        
+        inputs, targets = views_s.to(gpu), labels_s.to(gpu)
+        ray_grids = conds_s.to(gpu)
+        
+        # outputs = model(inputs)
+        outputs = model(inputs, ray_grids)
         loss = criterion(outputs, targets)
 
         val_loss += loss.item()

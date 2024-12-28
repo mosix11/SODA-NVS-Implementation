@@ -29,9 +29,6 @@ class SodaEncoder(nn.Module):
         else:
             raise RuntimeError('Invalid architecture for the Encoder!')
         
-        if c_dim:
-            self.z_dim = c_dim
-        
         self.encoder = []
         for name, module in net.named_children():
             if isinstance(module, nn.Linear):
@@ -68,6 +65,23 @@ class SodaEncoder(nn.Module):
         self.encoder = nn.Sequential(*self.encoder)
 
     def forward(self, x, c=None):
+        
+        if len(x.shape) == 5: # More than one view in the batch. Shape x: [B, V, C, H, W], Shape c: [B, V, H, W, D]
+            assert len(x.shape) == len(c.shape)
+            xs = list(torch.unbind(x, dim=1)) # xs is a list of tensors of shape [B, C, H, W]
+            cs = list(torch.unbind(c, dim=1)) # cs is a list of tensors of shape [B, H, W, D]
+            zs = []
+            for xi, ci in zip(xs, cs):
+                c_ = self.c_emb(ci)
+                c_ = c_.permute(0, 3, 1, 2)
+                x_ = self.rgb_linear_projector(xi)
+                x_ = torch.cat((x_, c_), dim=1)
+                zi = self.encoder(x_)
+                zs.append(zi)
+            z = torch.stack(zs).mean(dim=0)
+            return z
+            
+            
         if c is not None:
             c = self.c_emb(c)
             c = c.permute(0, 3, 1, 2)
@@ -76,3 +90,10 @@ class SodaEncoder(nn.Module):
         
         return self.encoder(x)
         
+        
+        
+    def get_z_dim(self):
+        return self.z_dim
+    
+    def get_c_dim(self):
+        return self.c_dim

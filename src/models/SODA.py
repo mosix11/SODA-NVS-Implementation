@@ -73,7 +73,7 @@ class SODA(nn.Module):
         
         self.T = T
         self.z_drop_prob = z_drop_prob
-        self.c_drop_prob = c_drop_prob
+        # self.c_drop_prob = c_drop_prob
         self.loss = nn.MSELoss()
         
         self.device = torch.device('cpu')
@@ -154,15 +154,15 @@ class SODA(nn.Module):
                 x_recon = self.decoder(x_noised, t / self.T, None, None, None)
         return x_recon, noise
 
-    def encode(self, x, c_source=None, norm=False, use_amp=False):
+    def encode(self, x, c=None, norm=False, use_amp=False):
         with autocast('cuda', enabled=use_amp):
-            z = self.encoder(x, c_source)
+            z = self.encoder(x, c)
         if norm:
             z = torch.nn.functional.normalize(z)
         return z
     
     
-    def ddim_sample(self, n_sample, z_guide, c_cond, steps=100, eta=0.0, guide_w=0.3, notqdm=False, use_amp=False):
+    def ddim_sample(self, n_sample, z_guide, c_cond, steps=100, eta=0.0, guide_w=2, notqdm=False, use_amp=False):
         ''' Sampling with DDIM sampler. Actual NFE is `2 * steps`.
 
             Args:
