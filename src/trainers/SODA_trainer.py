@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision
 
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -66,8 +67,8 @@ class SODATrainer():
 
         self.max_epochs = max_epochs
         self.warmup_epochs = warmup_epochs
-        self.sampling_freq_e = sampling_freq_e if sampling_freq_e is not 0 or sampling_freq_e is not None else None
-        self.linear_prob_freq_e = linear_prob_freq_e if linear_prob_freq_e is not 0 or linear_prob_freq_e is not None else None
+        self.sampling_freq_e = sampling_freq_e if sampling_freq_e != 0 or sampling_freq_e is not None else None
+        self.linear_prob_freq_e = linear_prob_freq_e if linear_prob_freq_e != 0 or linear_prob_freq_e is not None else None
         
         self.optimizer_type = optimizer_type
         self.enc_lr = enc_lr
@@ -272,18 +273,24 @@ class SODATrainer():
         if self.sampling_freq_e and (self.epoch+1) % self.sampling_freq_e == 0:
             ema_sample_method = self.ema.ema_model.ddim_sample
             self.ema.ema_model.eval()
-            sample_views, sample_rays, label = self.dataset.get_val_set().get_source_dataset().get_all_views(0)
-            sample_views = sample_views.unsqueeze(0)
-            sample_rays = sample_rays.unsqueeze(0)
-            
-            # with torch.no_grad():
-            #     z_guide = self.ema.ema_model.encode(vis_batch[:opt.n_sample], norm=False, use_amp=use_amp)
-            #     x_gen = ema_sample_method(opt.n_sample, target.shape[1:], z_guide)
-            # # save an image of currently generated samples (top rows)
-            # # followed by real images (bottom rows)
-            # x_real = target[:opt.n_sample]
-            # x_all = torch.cat([x_gen.cpu(), x_real.cpu()])
-            # grid = make_grid(x_all, nrow=10)
+            num_targets = 23
+            sample_views, sample_cs, label = self.dataset.get_val_set().get_source_dataset().get_all_views(0)
+            source_view, target_views = torch.split(sample_views.to(self.gpu), [1, 23], dim=0)
+            source_c, target_cs = torch.split(sample_cs.to(self.gpu), [1, 23], dim=0)
+            with torch.no_grad():
+                z_guide = self.ema.ema_model.encode(source_view, source_c, norm=False, use_amp=self.use_amp)
+                z_guide = z_guide.repeat(num_targets, 1)
+                x_gen = ema_sample_method(num_targets, z_guide, target_cs, use_amp=self.use_amp)
+            # save an image of currently generated samples (top rows)
+            # followed by real images (bottom rows)
+            x_real = (target_views.cpu() + 1) / 2
+            x_gen = self.dataset.denormalize(x_gen.cpu())
+            x_all = torch.cat([x_gen, x_real])
+            if self.write_sum:
+                self.writer.add_images('Synthetized Views', x_all, global_step=0)
+            else:
+                grid = torchvision.utils.make_grid(x_all, nrow=10)
+                torchvision.utils.save_image(grid, self.outputs_dir.joinpath(f"image_ep{self.epoch}_ema.png"))
             
             
             

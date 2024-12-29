@@ -204,10 +204,11 @@ class SODA(nn.Module):
         def pred_cfg_eps_double_batch():
             # double batch
             x_double = x.repeat(2, 1, 1, 1)
+            c_double = c.repeat(2, 1, 1, 1)
             t_double = t.repeat(2)
-
+            # print(x_double.shape, c_double.shape, t_double.shape, z.shape, mask.shape)
             with autocast('cuda', enabled=use_amp):
-                eps = self.decoder(x_double, t_double, z, mask, c).float()
+                eps = self.decoder(x_double, t_double, z, mask, c_double).float()
             n_sample = eps.shape[0] // 2
             eps1 = eps[:n_sample]
             eps2 = eps[n_sample:]

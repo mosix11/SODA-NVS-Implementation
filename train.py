@@ -37,8 +37,8 @@ if __name__ == '__main__':
         max_epochs=400,
         warmup_epochs=20,
         
-        linear_prob_freq_e =10,
-        sampling_freq_e = 10,
+        linear_prob_freq_e = 10,
+        sampling_freq_e = 1,
         write_summary = True,
         run_on_gpu = True,
         use_amp = True
