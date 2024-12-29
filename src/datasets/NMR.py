@@ -129,6 +129,7 @@ class ObjectDataset(Dataset):
         
         return views, ray_grids, label
     
+    
 
     def set_num_views(self, num_views):
         self.num_views = num_views

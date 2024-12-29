@@ -97,6 +97,8 @@ class SODATrainer():
         self.checkpoints_dir = self.outputs_dir.joinpath('checkpoints')
         self.checkpoints_dir.mkdir(exist_ok=True)
         
+        self.generated_samples_dir = self.outputs_dir.joinpath('generated_samples')
+        self.generated_samples_dir.mkdir(exist_ok=True)
         
     def setup_data_loaders(self, dataset):
         self.dataset = dataset
@@ -271,26 +273,35 @@ class SODATrainer():
             print("LinearProbe accuracy =", lp_acc)
             
         if self.sampling_freq_e and (self.epoch+1) % self.sampling_freq_e == 0:
-            ema_sample_method = self.ema.ema_model.ddim_sample
-            self.ema.ema_model.eval()
-            num_targets = 23
-            sample_views, sample_cs, label = self.dataset.get_val_set().get_source_dataset().get_all_views(0)
-            source_view, target_views = torch.split(sample_views.to(self.gpu), [1, 23], dim=0)
-            source_c, target_cs = torch.split(sample_cs.to(self.gpu), [1, 23], dim=0)
-            with torch.no_grad():
-                z_guide = self.ema.ema_model.encode(source_view, source_c, norm=False, use_amp=self.use_amp)
-                z_guide = z_guide.repeat(num_targets, 1)
-                x_gen = ema_sample_method(num_targets, z_guide, target_cs, use_amp=self.use_amp)
-            # save an image of currently generated samples (top rows)
-            # followed by real images (bottom rows)
-            x_real = (target_views.cpu() + 1) / 2
-            x_gen = self.dataset.denormalize(x_gen.cpu())
-            x_all = torch.cat([x_gen, x_real])
-            if self.write_sum:
-                self.writer.add_images('Synthetized Views', x_all, global_step=0)
-            else:
-                grid = torchvision.utils.make_grid(x_all, nrow=10)
-                torchvision.utils.save_image(grid, self.outputs_dir.joinpath(f"image_ep{self.epoch}_ema.png"))
+            for s in range(4):
+                self.synthesis_views(s)
+            
+            
+            
+    def synthesis_views(self, object_idx, num_source_views=1, num_target_views=24):
+        ema_sample_method = self.ema.ema_model.ddim_sample
+        self.ema.ema_model.eval()
+        num_sources = num_source_views
+        num_targets = num_target_views
+        source_view, source_c, label_s = self.dataset.get_val_set().get_source_dataset().__getitem__(object_idx)
+        source_view, source_c = source_view.unsqueeze(0), source_c.unsqueeze(0)
+        target_views, target_cs, label_t = self.dataset.get_val_set().get_target_dataset().get_all_views(object_idx)
+        
+        with torch.no_grad():
+            z_guide = self.ema.ema_model.encode(source_view.to(self.gpu), source_c.to(self.gpu), norm=False, use_amp=self.use_amp)
+            z_guide = z_guide.repeat(num_targets, 1)
+            x_gen = ema_sample_method(num_targets, z_guide, target_cs.to(self.gpu), use_amp=self.use_amp)
+        # save an image of currently generated samples (top rows)
+        # followed by real images (bottom rows)
+        x_real = (target_views.cpu() + 1) / 2
+        x_gen = (x_gen.cpu() + 1) / 2
+        x_all = torch.cat([x_gen, x_real])
+        if self.write_sum:
+            self.writer.add_images(f"Synthetized Views of Object {object_idx}", x_all, global_step=0)
+        grid = torchvision.utils.make_grid(x_all, nrow=6)
+        torchvision.utils.save_image(grid, self.generated_samples_dir.joinpath(f"image_{object_idx}_epoch_{self.epoch+1}_{datetime.datetime.now()}_ema.png"))
+            
+                
             
             
             
