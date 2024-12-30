@@ -133,6 +133,10 @@ class SODATrainer():
         ema.eval()
         self.ema = ema
         
+    
+    def get_EMA(self):
+        return self.ema
+        
     def configure_optimizers(self, optim_state_dict=None):
         if self.optimizer_type == "adamw":
             optim = torch.optim.AdamW([
@@ -158,8 +162,8 @@ class SODATrainer():
             self.linear_probe = LinearProbe(train_set=dataset.get_train_set().get_source_dataset(),
                                             test_set=dataset.get_test_set().get_source_dataset(),
                                             num_classes=dataset.get_num_classes(),
-                                            batch_size=2048,
-                                            epoch=15)
+                                            batch_size=512,
+                                            epoch=6)
         
         
         
@@ -261,7 +265,7 @@ class SODATrainer():
                     loss = self.model.validation_step(x_source, x_target, c_source, c_target, self.use_amp)
                 val_loss.update(loss.item())
                 
-            print(f"Epoch{self.epoch + 1}/{self.max_epochs}, Training Loss: {val_loss.avg}")
+            print(f"Epoch{self.epoch + 1}/{self.max_epochs}, Validation Loss: {val_loss.avg}")
             if self.write_sum:
                 self.writer.add_scalar('Loss/Val', val_loss.avg, self.epoch)
                 
@@ -269,7 +273,8 @@ class SODATrainer():
             self.model.eval()
             feat_func = partial(self.ema.ema_model.encode, norm=True, use_amp=self.use_amp)
             lp_acc = self.linear_probe.evaluate(feat_func, self.model.get_encoder().get_z_dim(), device=self.gpu)
-            self.writer.add_scalar('Metrics/Linear Probe', lp_acc, self.epoch)
+            if self.write_sum:
+                self.writer.add_scalar('Metrics/Linear Probe', lp_acc, self.epoch)
             print("LinearProbe accuracy =", lp_acc)
             
         if self.sampling_freq_e and (self.epoch+1) % self.sampling_freq_e == 0:
@@ -279,8 +284,8 @@ class SODATrainer():
             
             
     def synthesis_views(self, object_idx, num_source_views=1, num_target_views=24):
-        ema_sample_method = self.ema.ema_model.ddim_sample
         self.ema.ema_model.eval()
+        ema_sample_method = self.ema.ema_model.ddim_sample
         num_sources = num_source_views
         num_targets = num_target_views
         source_view, source_c, label_s = self.dataset.get_val_set().get_source_dataset().__getitem__(object_idx)
@@ -299,7 +304,7 @@ class SODATrainer():
         if self.write_sum:
             self.writer.add_images(f"Synthetized Views of Object {object_idx}", x_all, global_step=0)
         grid = torchvision.utils.make_grid(x_all, nrow=6)
-        torchvision.utils.save_image(grid, self.generated_samples_dir.joinpath(f"image_{object_idx}_epoch_{self.epoch+1}_{datetime.datetime.now()}_ema.png"))
+        torchvision.utils.save_image(grid, self.generated_samples_dir.joinpath(f"epoch_{self.epoch+1}_image_{object_idx}_{datetime.datetime.now()}_ema.png"))
             
                 
             

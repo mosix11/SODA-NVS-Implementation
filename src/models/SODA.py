@@ -11,20 +11,10 @@ from .soda_encoder import SodaEncoder
 
 class SODA(nn.Module):
     def __init__(self, 
-                 use_encoder = True,
-                 encoder_arch:str = 'resnet18',
-                 enc_img_shape:tuple = (3, 32, 32),
-                 z_dim:int = 128,
-                 c_dim:int = None,
-                 c_pos_emb_freq:int = 6,
-                 
-                 dec_img_shape:tuple = (3, 32, 32),
-                 dec_dropout:float = 0.1,
-                 self_att_type:str = 'normal',
-                 
+                 encoder:SodaEncoder,
+                 decoder:UNet,
                  beta_schedule:str = 'inverted',
                  T:int = 1000,
-                 t_dim:int = 512,
                  z_drop_prob:float = 0.12,
                 #  c_drop_prob:float = 0.1,
                  )->None:
@@ -33,40 +23,21 @@ class SODA(nn.Module):
             DDIM sampler proposed by "Denoising Diffusion Implicit Models".
 
             Args:
-                use_encoder: Switch for turninig the encoder off and on for test purposes.
                 encoder: A network (e.g. ResNet) which performs image->latent mapping.
                 decoder: A network (e.g. UNet) which performs same-shape mapping.
                 device: The CUDA device that tensors run on.
             Parameters:
-                beta_schedule, n_T, drop_prob
+                beta_schedule, T, z_drop_prob
         '''
         super(SODA, self).__init__()
         
-        self.use_encoder = use_encoder
-        if use_encoder:
-            self.encoder = SodaEncoder(arch=encoder_arch,
-                                    img_shape=enc_img_shape,
-                                    z_dim=z_dim,
-                                    c_dim=c_dim,
-                                    c_pos_emb_freq=c_pos_emb_freq)
+
+        self.encoder = encoder
             
-        self.decoder = UNet(img_shape=dec_img_shape,
-                            n_channels=128,
-                            ch_mults=(1, 2, 2, 2),
-                            is_attn=(False, True, False, False),
-                            attn_channels_per_head=None,
-                            dropout=dec_dropout,
-                            n_blocks=2,
-                            use_res_for_updown=False,
-                            t_dim=t_dim,
-                            z_dim=z_dim,
-                            c_dim=c_dim,
-                            c_pos_emb_freq=c_pos_emb_freq,
-                            self_attention_type=self_att_type
-                            )
+        self.decoder = decoder
         
-        self.enc_img_shape = enc_img_shape
-        self.dec_img_shape = dec_img_shape
+        self.enc_img_shape = encoder.img_shape
+        self.dec_img_shape = decoder.img_shape
         
         self.ddpm_sche = get_schedule(beta_schedule, T, 'DDPM')
         self.ddim_sche = get_schedule(beta_schedule, T, 'DDIM')
@@ -74,6 +45,7 @@ class SODA(nn.Module):
         self.T = T
         self.z_drop_prob = z_drop_prob
         # self.c_drop_prob = c_drop_prob
+        
         self.loss = nn.MSELoss()
         
         self.device = torch.device('cpu')
@@ -83,7 +55,7 @@ class SODA(nn.Module):
         self.device = device
         self.ddpm_sche = {key: self.ddpm_sche[key].to(device) for key in self.ddpm_sche}
         self.ddim_sche = {key: self.ddim_sche[key].to(device) for key in self.ddim_sche}
-        if self.use_encoder: self.encoder.to(device)
+        self.encoder.to(device)
         self.decoder.to(device)
         
     def load_model_params(self, enc_state_dict=None, dec_state_dict=None):
@@ -91,7 +63,7 @@ class SODA(nn.Module):
         if dec_state_dict: self.decoder.load_state_dict(dec_state_dict)
         
     def get_encoder(self):
-        return self.encoder if self.use_encoder else None
+        return self.encoder
     
     def get_decoder(self):
         return self.decoder
@@ -119,15 +91,15 @@ class SODA(nn.Module):
         
         
     def training_step(self, x_source, x_target, c_source=None, c_target=None, use_amp=False):
-        x_recon, noise = self(x_source, x_target, c_source, c_target, use_amp)
+        pred_noise, noise = self(x_source, x_target, c_source, c_target, use_amp)
         with autocast('cuda', enabled=use_amp):
-            loss = self.loss(noise, x_recon)
+            loss = self.loss(noise, pred_noise)
         return loss
     
     def validation_step(self, x_source, x_target, c_source=None, c_target=None, use_amp=False):
-        x_recon, noise = self(x_source, x_target, c_source, c_target, use_amp)
+        pred_noise, noise = self(x_source, x_target, c_source, c_target, use_amp)
         with autocast('cuda', enabled=use_amp):
-            loss = self.loss(noise, x_recon)
+            loss = self.loss(noise, pred_noise)
         return loss
         
     def forward(self, x_source, x_target, c_source=None, c_target=None, use_amp=False):
@@ -147,12 +119,9 @@ class SODA(nn.Module):
         # 0 for conditional, 1 for unconditional
         mask = torch.bernoulli(torch.zeros(x_noised.shape[0]) + self.z_drop_prob).to(self.device)
         with autocast('cuda', enabled=use_amp):
-            if self.use_encoder:
-                z = self.encoder(x_source, c_source)
-                x_recon = self.decoder(x_noised, t / self.T, z, mask, c_target)
-            else:
-                x_recon = self.decoder(x_noised, t / self.T, None, None, None)
-        return x_recon, noise
+            z = self.encoder(x_source, c_source)
+            pred_noise = self.decoder(x_noised, t / self.T, z, mask, c_target)
+        return pred_noise, noise
 
     def encode(self, x, c=None, norm=False, use_amp=False):
         with autocast('cuda', enabled=use_amp):
@@ -169,11 +138,10 @@ class SODA(nn.Module):
                 n_sample: The batch size.
                 z_guide: The latent code extracted from real images (for guidance).
                 c_cond: Conditioning tensor for conditional generation.
-                steps: The number of total timesteps.
                 eta: controls stochasticity. Set `eta=0` for deterministic sampling.
                 guide_w: The CFG scale.
             Returns:
-                The sampled image tensor ranged in `[0, 1]`.
+                The sampled image tensor ranged in `[-1, 1]`.
         '''
         size = self.dec_img_shape
         sche = self.ddim_sche

@@ -10,19 +10,19 @@ from .blocks import DownsampleResBlock, UpsampleResBlock, ResAttBlock, MiddleBlo
 
 class UNet(nn.Module):
     def __init__(self, 
-                 img_shape = (3, 32, 32), 
-                 n_channels = 128,
-                 ch_mults = (1, 2, 2, 2),
-                 is_attn = (False, True, False, False),
-                 attn_channels_per_head = 4,
-                 dropout = 0.1,
-                 n_blocks = 2,
-                 use_res_for_updown = False,
-                 t_dim = 512,
-                 z_dim = 128,
-                 c_dim = None,
+                 img_shape:tuple = (3, 32, 32), 
+                 n_channels:int = 128,
+                 ch_mults:tuple = (1, 2, 2, 2),
+                 is_attn:tuple = (False, True, False, False),
+                 attn_channels_per_head:int = 4,
+                 dropout:float = 0.1,
+                 n_blocks:int = 2,
+                 use_res_for_updown:bool = False,
+                 t_dim:int = 512,
+                 z_dim:int = 128,
+                 c_dim:int = None,
                  c_pos_emb_freq:int = 6,
-                 self_attention_type = 'nromal'
+                 self_attention_type:str = 'nromal'
                  ):
         """
         * `image_shape` is the (channel, height, width) size of images.
@@ -30,7 +30,7 @@ class UNet(nn.Module):
         * `ch_mults` is the list of channel numbers at each resolution. The number of channels is `n_channels * ch_mults[i]`
         * `is_attn` is a list of booleans that indicate whether to use attention at each resolution
         * `dropout` is the dropout rate
-        * `n_blocks` is the number of `UpDownBlocks` at each resolution
+        * `n_blocks` is the number of ResNet blocks at each resolution
         * `t_dim` the dimension of the time embedding vector
         * `use_res_for_updown` indicates whether to use ResBlocks for up/down sampling (BigGAN-style)
         * `z_dim` is the number channels in the latent code derived by the resnet encoder
@@ -39,6 +39,7 @@ class UNet(nn.Module):
         """
         super().__init__()
         
+        self.img_shape = img_shape
         n_resolutions = len(ch_mults)
         
         

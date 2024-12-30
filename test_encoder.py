@@ -27,14 +27,15 @@ if gpu == None:
 
 
 # Define hyperparameters
-img_size = (32, 32)
-num_classes = 13
-batch_size = 32
-epochs = 40
+img_size = (64, 64)
+num_classes = 3
+batch_size = 64
+epochs = 20
 learning_rate = 0.0005
 
 
-nmr = NMR(img_size=img_size, num_views=2, batch_size=batch_size, num_workers=8)
+nmr = NMR(img_size=img_size, num_views=2, batch_size=batch_size, num_workers=12,
+          exclude_classes=['02828884', '02933112', '03001627', '03211117', '03636649', '03691459', '04090263', '04379243', '04401088', '04530566'])
 model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), z_dim=num_classes, c_dim=288, c_pos_emb_freq=24)
 # model = SodaEncoder(arch='resnet18', img_shape=(3, *img_size), z_dim=num_classes, c_dim=None)
 
