@@ -57,23 +57,6 @@ class ObjectDataset(Dataset):
         self.num_views = num_views
         self.class_ids = class_ids
         
-        # self.elevation = 30.0
-        # self.distance = 2.732
-
-
-        # # Precompute viewpoints for all 24 views
-        # self.precomputed_viewpoints = srf.get_points_from_angles(
-        #     torch.full((24,), self.distance),  # Distances
-        #     torch.full((24,), self.elevation),  # Elevations
-        #     -torch.arange(0, 24) * 15          # Azimuths
-        # )
-        
-        # precomputed_ray_grids = []
-        # for viewpoint in self.precomputed_viewpoints:
-        #     precomputed_ray_grids.append(create_ray_grid(viewpoint, H=img_size[0], W=img_size[1]))
-
-        # self.precomputed_ray_grids = torch.stack(precomputed_ray_grids, dim=0)
-        
         
     def __len__(self):
         return len(self.obj_paths)
@@ -337,78 +320,3 @@ class NMR():
     
     
     
-    
-    # def _preprocess_data(self):
-    #     self._split_views_to_files()
-        
-    #     self.train_set = ObjectDataset(self._get_split_paths('train'), self.CLASS_IDS, self.img_size,
-    #                                    self.transformations, num_views=self.num_views)
-    #     self.val_set = ObjectDataset(self._get_split_paths('val'), self.CLASS_IDS, self.img_size,
-    #                                  self.transformations, num_views=self.num_views)
-    #     self.test_set = ObjectDataset(self._get_split_paths('test'), self.CLASS_IDS, self.img_size,
-    #                                   self.transformations, num_views=self.num_views)
-    
-    # def _get_split_paths(self, split):
-    #     paths = sorted(self.objects_dir.glob(f"*_{split}_*.npz"))  # Matches {class_id}_{split}_{obj_id}.npz
-    #     filtered_paths = [
-    #         path for path in paths
-    #         if path.stem.split("_")[0] in self.CLASS_IDS
-    #     ]
-    #     return filtered_paths
-    
-    # def _split_views_to_files(self):
-    #     if self.objects_dir.is_dir() and not any( self.objects_dir.iterdir()): 
-    #         mesh_dir = self.dataset_dir / Path('mesh_reconstruction')
-            
-    #         # Variables for moving average (per channel)
-    #         total_images = 0
-    #         running_mean = np.zeros(4)  # 4 channels
-    #         running_var = np.zeros(4)  # 4 channels
-            
-    #         for split in ['train', 'val', 'test']:
-    #             for npz_file in tqdm.tqdm(mesh_dir.glob(f'*_{split}_images.npz'), desc=f"Processing {split} set..."):
-    #                 class_id = npz_file.stem.split('_')[0]
-    #                 with np.load(npz_file) as data:
-                        
-    #                     all_objects = data['arr_0']  # Shape: (num_objects, 24, C, H, W)
-                        
-    #                     for obj_id, views in enumerate(all_objects):
-                            
-    #                         # # Calculate mean and std for current object's views without modifying data
-    #                         # views_normalized = views / 255.0  # Normalize to [0, 1] for statistics
-    #                         # obj_mean = np.mean(views_normalized, axis=(0, 2, 3))  # Per channel mean
-    #                         # obj_var = np.var(views_normalized, axis=(0, 2, 3))    # Per channel variance
-                            
-    #                         # # Update global moving mean and variance
-    #                         # num_views = 24  # 24 views per object * num_objects
-    #                         # delta = obj_mean - running_mean
-    #                         # total_images += num_views
-    #                         # running_mean += delta * (num_views / total_images)
-    #                         # running_var += (num_views * obj_var + delta**2 * (num_views * (total_images - num_views) / total_images))
-                            
-    #                         output_path = self.objects_dir / f"{class_id}_{split}_{obj_id}.npz"
-    #                         np.savez_compressed(output_path, views=views)
-
-    #         # # Finalize std calculation
-    #         # dataset_std = np.sqrt(running_var / total_images)
-    #         # dataset_mean = running_mean
-    #         print(f"Finished splitting objects. Output saved to {self.objects_dir}")
-    #         # print(f"Dataset statistics: Mean = {dataset_mean}   std = {dataset_std}")
-    #     else:
-    #         print(f"Objects already processed! {self.objects_dir}")
-        
-
-            
-    # def _download_dataset(self):
-    #     zip_file_path = self.dataset_dir.joinpath(Path('NMR_Dataset.zip'))
-    #     if zip_file_path.exists():
-    #         print('Dataset already downloaded!')
-    #         return
-    
-    #     try:
-    #         google_drive_link = 'https://drive.google.com/uc?id=1fY9IWK7yEfLOmS3wUgeXM3NIivhoGhsg'
-    #         gdown.download(google_drive_link, str(zip_file_path), quiet=False)
-    #         with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-    #             zip_ref.extractall(self.dataset_dir)
-    #     except Exception as e:
-    #         raise RuntimeError(f"Failed to download or extract the dataset: {e}")
