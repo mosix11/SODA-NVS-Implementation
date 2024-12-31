@@ -19,7 +19,6 @@ if __name__ == '__main__':
     if not cfg_path.exists(): raise RuntimeError('The specified config file was not found.')
     with open(cfg_path, 'r') as file:
         cfg = yaml.full_load(file)
-    print()
     
     weights_dir = Path('weights')
     weights_dir.mkdir(exist_ok=True)

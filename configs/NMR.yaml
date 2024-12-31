@@ -76,6 +76,9 @@ trainer:
   use_amp: True # Whether to use AMP for training.
 
 
+linear_probe:
+  
+
 
 
 # dataset: # 'NMR'

@@ -6,6 +6,7 @@ import numpy as np
 from pathlib import Path
 import argparse
 import imageio.v2 as imageio
+import yaml
 
 from src.datasets import NMR
 from src.models import SODA
@@ -26,7 +27,7 @@ def synthesis_views(model, sampling_method, dataset, object_idx, steps, num_sour
     x_gen = (x_gen.cpu() + 1) / 2
     
     grid = torchvision.utils.make_grid(torch.cat([x_gen, x_real]), nrow=6)
-    torchvision.utils.save_image(grid, Path('outputs/sampled_GIFs').joinpath(f"image_{object_index}.png"))
+    torchvision.utils.save_image(grid, Path('outputs/sampled_GIFs').joinpath(f"{object_index}-images.png"))
     
     return source_view, x_gen.permute(0, 2, 3, 1), x_real.permute(0, 2, 3, 1)
 
@@ -38,12 +39,19 @@ def generate_GIF(tensor, path):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--config', help="Configuration to used for training the model.", type=str, default='NMR.yaml')
+    parser.add_argument("--objidx", help="Which object from the test set to use for sampling.", type=int, default=-1)
     parser.add_argument("--model", help="Which model to use for sampling between EMA and online model.", type=str, choices=['EMA', 'online'], default='EMA')
     parser.add_argument("--method", help="Which sampling method to use between DDPM and DDIM.", type=str, choices=['DDIM', 'DDPM'], default='DDIM')
     parser.add_argument("--nfe", help="NFE or number of feature calls during sampling.", type=int, default=200)
     parser.add_argument('--sources', help="Number of source views to use for generating latent code", type=int, default=1)
     
     args = parser.parse_args()
+    
+    cfg_path = Path('configs').joinpath(args.config)
+    if not cfg_path.exists(): raise RuntimeError('The specified config file was not found.')
+    with open(cfg_path, 'r') as file:
+        cfg = yaml.full_load(file)
     
     weights_dir = Path('weights')
     model = None
@@ -63,7 +71,7 @@ if __name__ == '__main__':
     NFE = args.nfe
     
     model.eval()
-    nmr = NMR()
+    nmr = NMR(**cfg['dataset'])
     
     saving_dir = Path('outputs/sampled_GIFs')
     saving_dir.mkdir(exist_ok=True)
@@ -82,10 +90,11 @@ if __name__ == '__main__':
     num_source_views = args.sources
     num_target_views = 24
     
-    object_index = 1000
-    source_view, x_gen, x_real = synthesis_views(model, sampling_method, nmr, object_index, NFE/2, num_source_views, num_target_views, device, use_amp)
-    generate_GIF(x_gen, saving_dir.joinpath(f"gen-idx-{object_index}.gif"))
-    generate_GIF(x_real, saving_dir.joinpath(f"real-idx-{object_index}.gif"))
+    if args.objidx == -1: object_index = np.random.randint(0, nmr.get_test_set().get_source_dataset().__len__())
+    else: object_index = args.objidx
     
-        
+    source_view, x_gen, x_real = synthesis_views(model, sampling_method, nmr, object_index, NFE/2, num_source_views, num_target_views, device, use_amp)
+    generate_GIF(x_gen, saving_dir.joinpath(f"{object_index}-gen.gif"))
+    generate_GIF(x_real, saving_dir.joinpath(f"{object_index}-real.gif"))
+    print(f"The sampled views was saved at {saving_dir}/{object_index}-*.*")
     

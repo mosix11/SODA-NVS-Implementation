@@ -12,8 +12,6 @@ from einops.layers.torch import Rearrange
 
 import os
 
-def GroupNorm32(channels):
-    return nn.GroupNorm(32, channels, affine=False)
 
 
 class Upsample(nn.Module):
@@ -72,7 +70,7 @@ class AttentionBlock(nn.Module):
             d_k = n_channels
         n_heads = n_channels // d_k
 
-        self.norm = GroupNorm32(n_channels)
+        self.norm = nn.GroupNorm(32, n_channels, affine=False)
         # Projections for query, key and values
         self.projection = nn.Linear(n_channels, n_heads * d_k * 3)
         # Linear layer for final transformation
@@ -118,7 +116,7 @@ class TorchAttentionBlock(nn.Module):
             d_k = n_channels
         n_heads = n_channels // d_k
 
-        self.norm = GroupNorm32(n_channels)
+        self.norm = nn.GroupNorm(32, n_channels, affine=False)
 
         # PyTorch MultiheadAttention module
         self.attention = nn.MultiheadAttention(embed_dim=n_channels, num_heads=n_heads, batch_first=True)
@@ -156,7 +154,7 @@ class FlashAttentionBlock(nn.Module):
             d_k = n_channels
         n_heads = n_channels // d_k
 
-        self.norm = GroupNorm32(n_channels)
+        self.norm = nn.GroupNorm(32, n_channels, affine=False)
         self.projection = nn.Linear(n_channels, 3 * n_channels)  # For Q, K, V
 
         self.n_heads = n_heads
@@ -318,11 +316,11 @@ class ResidualBlock(nn.Module):
         * `dropout` is the dropout rate
         """
         super().__init__()
-        self.norm1 = GroupNorm32(in_channels)
+        self.norm1 = nn.GroupNorm(32, in_channels, affine=False)
         self.act1 = nn.SiLU()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
 
-        self.norm2 = GroupNorm32(out_channels)
+        self.norm2 = nn.GroupNorm(32, out_channels, affine=False)
         self.act2 = nn.SiLU()
         self.conv2 = nn.Sequential(
             nn.Dropout(dropout),
@@ -431,3 +429,13 @@ class DownsampleResBlock(nn.Module):
 
     def forward(self, x, t, z):
         return self.op(x, t, z)
+    
+    
+class RMSNorm(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.scale = dim ** 0.5
+        self.g = nn.Parameter(torch.ones(1, dim, 1, 1))
+
+    def forward(self, x):
+        return F.normalize(x, dim = 1) * self.g * self.scale
