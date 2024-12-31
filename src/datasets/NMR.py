@@ -6,7 +6,6 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, random_split
 import torchvision
 import torchvision.transforms.v2 as transforms 
-import soft_renderer.functional as srf
 
 from torchvision.io import decode_image
 
@@ -231,6 +230,10 @@ class NMR():
     
     def get_num_classes(self):
         return self.num_classes
+    
+    def set_batch_size(self, batch_size):
+        self.batch_size = batch_size
+        self._init_loaders()
     
     def denormalize(self, batch_tensor):
         """

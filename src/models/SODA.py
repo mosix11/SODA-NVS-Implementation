@@ -168,7 +168,7 @@ class SODA(nn.Module):
         return x_i
     
     
-    def pred_eps_(self, x, t, z, mask, c, guide_w, alpha, use_amp, clip_x=True):
+    def pred_eps_(self, x, t, z, mask, c, guide_w, alpha, use_amp, clip_x=False):
         def pred_cfg_eps_double_batch():
             # double batch
             x_double = x.repeat(2, 1, 1, 1)

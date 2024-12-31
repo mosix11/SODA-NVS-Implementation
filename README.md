@@ -19,7 +19,7 @@ This repository contains a minimal implementation of the SODA method proposed in
 
 The SODA model consists of using diffusion models for representation learning. More specifically, in this approach, we train an encoder jointly with the diffusion denoiser and the task of encoder is to produce latent vectors that guide the denoiser twoards generating intended targets. Later we can use the encoder (which has learnt a compressed representation of the data) for downstream tasks.
 
-:exclamation: This implementation only focuses on NVS task while the paper includes a variety of tasks that shows the power of SODA.
+:exclamation: This implementation only focuses on NVS task while the paper includes a variety of tasks which show the power of SODA.
 
 ## Simplifications
 
