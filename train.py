@@ -25,9 +25,6 @@ if __name__ == '__main__':
     
 
     nmr = NMR(**cfg['dataset'])
-    # print(nmr.get_train_set().__len__())
-    # print(nmr.get_val_set().__len__())
-    # print(nmr.get_test_set().__len__())
     encoder = SodaEncoder(**cfg['encoder'])
     denoiser = UNet(**cfg['denoiser'])
     soda = SODA(

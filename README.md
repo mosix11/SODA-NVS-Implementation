@@ -26,10 +26,10 @@ The SODA model consists of using diffusion models for representation learning. M
 Here is the differences with the original paper:
 
 1. I have not implemented the Cross-Attention mechanism for conditioning on the laten vector as mentioned in the original paper that it improves the performance in for the 3D datasets.
-2. Despite the original paper suggesting to split the latent vector to m+1 subvectors and do layer modulation for each layer in the denoiser U-Net with its corresponding latent subvector (this helpes latent disentanglement which was not the goal of my project), I used the whole latent vector for layer modulation.
+2. Despite the original paper suggesting to split the latent vector to m+1 subvectors and do layer modulation for each layer in the denoiser U-Net with its corresponding latent subvector (this helpes latent disentanglement which was not the goal of my project), I used the whole latent vector for global feature modulation.
 3. The original paper upsamples the images to 256x256 for the encoder and 128x128 for the denoiser (NMR images are 64x64) however I trained the model with 64x64 and 32x32 images.
 4. In the original paper the authors state that after calculating the HxWx6 dimensional ray-grids for each view of the object, they further project each 6 dimensional ray = \[o,d\] to a sphere which I did not exactly understand what do they mean! So I used the 6 dimensional rays and after using scaled sinusoidal positional encoding each ray is converted to 288 dimensionl vectors (can be adjusted with frequency band L).
-5. The AdaGN using the laten vector is done using linear projections of the latent vector and time embedding in the original paper while in this project it is done simply by chunking the vectors (latent and time embedding) into two vectors of the same shape.
+5. The AdaGN trick for modulation using the laten vector is done using linear projections of the latent vector and time embedding in the original paper while in this project it is done simply by chunking the vectors (latent and time embedding) into two vectors of the same shape.
 
 ## Issues
 

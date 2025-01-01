@@ -184,32 +184,93 @@ class FlashAttentionBlock(nn.Module):
         attn_output = attn_output.permute(0, 2, 1).view(batch_size, n_channels, height, width)
         return attn_output + x
 
-
-class TimeEmbedding(nn.Module):
-    def __init__(self, n_channels):
+class ScaledSinusoidalPositionEmbedBlock(nn.Module):
+    def __init__(self, dim, s=0.0001):
         """
-        * `n_channels` is the number of dimensions in the embedding
+        Scaled sinusoidal positional encoding for normalized inputs in range [-1, 1]
+        based on the descriptions of the SODA paper. 
+        
+        Args:
+            dim (int): The dimensionality of the positional encoding (must be even).
+            s (float): Scaling factor for the arguments of sin and cos.
         """
         super().__init__()
-        self.n_channels = n_channels
-        self.lin1 = nn.Linear(self.n_channels // 4, self.n_channels)
+        assert dim % 2 == 0, "Dimension must be even"
+        self.dim = dim
+        self.s = s
+
+        # Precompute the frequencies for half of the dimensions
+        half_dim = dim // 2
+        self.register_buffer(
+            'frequencies',
+            1.0 / ((10000 ** (torch.arange(half_dim, dtype=torch.float32) / half_dim)) * 2 * torch.pi * self.s)
+        )
+
+    def forward(self, positions):
+        """
+        Args:
+            positions (torch.Tensor): Input positions (batch_size, seq_length) normalized to [-1, 1].
+            
+        Returns:
+            torch.Tensor: Scaled sinusoidal positional encodings (batch_size, seq_length, dim).
+        """
+        # Scale positions
+        scaled_positions = positions.unsqueeze(-1)  # (batch_size, seq_length, 1)
+        
+        # Compute sinusoidal embeddings
+        sinusoidal = scaled_positions * self.frequencies.unsqueeze(0) # Broadcast frequencies
+        embeddings = torch.cat([torch.cos(sinusoidal), torch.sin(sinusoidal)], dim=-1)  # (batch_size, seq_length, dim)
+        # TODO check the impact of the order of concatenation between first `sin` then `cos` vs first `cos` then `sin`. It seems
+        # int the original paper they have used `cos` first based on Figure 10 of the SODA paper.
+        return embeddings
+
+class TimeEmbedding(nn.Module):
+    def __init__(self, dim):
+        """
+        * `dim` is the number of dimensions in the embedding
+        """
+        super().__init__()
+        self.dim = dim
+        # self.encoding = ScaledSinusoidalPositionEmbedBlock(dim=dim//4)
+        # self.lin1 = nn.Linear(self.dim // 4, self.dim)
+        self.encoding = ScaledSinusoidalPositionEmbedBlock(dim=dim)
+        self.lin1 = nn.Linear(self.dim, self.dim)
         self.act = nn.SiLU()
-        self.lin2 = nn.Linear(self.n_channels, self.n_channels)
+        self.lin2 = nn.Linear(self.dim, self.dim)
 
     def forward(self, t):
-        # Create sinusoidal position embeddings (same as those from the transformer)
-        half_dim = self.n_channels // 8
-        emb = torch.log(torch.tensor(10_000)) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, dtype=torch.float32, device=t.device) * -emb)
-        emb = t.float()[:, None] * emb[None, :]
-        emb = torch.cat((emb.sin(), emb.cos()), dim=1)
-
+        t = t * 2 - 1 # Original t is between [0, 1] we scale it to [-1, 1]
+        emb = self.encoding(t)
         # Transform with the MLP
         emb = self.act(self.lin1(emb))
         emb = self.lin2(emb)
         return emb
     
+# class TimeEmbedding(nn.Module):
+#     def __init__(self, n_channels):
+#         """
+#         * `n_channels` is the number of dimensions in the embedding
+#         """
+#         super().__init__()
+#         self.n_channels = n_channels
+#         self.lin1 = nn.Linear(self.n_channels // 4, self.n_channels)
+#         self.act = nn.SiLU()
+#         self.lin2 = nn.Linear(self.n_channels, self.n_channels)
+
+#     def forward(self, t):
+#         # Create sinusoidal position embeddings (same as those from the transformer)
+#         half_dim = self.n_channels // 8
+#         emb = torch.log(torch.tensor(10_000)) / (half_dim - 1)
+#         emb = torch.exp(torch.arange(half_dim, dtype=torch.float32, device=t.device) * -emb)
+#         emb = t.float()[:, None] * emb[None, :]
+#         emb = torch.cat((emb.sin(), emb.cos()), dim=1)
+
+#         # Transform with the MLP
+#         emb = self.act(self.lin1(emb))
+#         emb = self.lin2(emb)
+#         return emb
     
+
 class LatentEmbedding(nn.Module):
     def __init__(self, n_channels):
         """
@@ -365,7 +426,6 @@ class ResidualBlock(nn.Module):
         else:
             h = self.norm2(self.conv1(self.act1(self.norm1(x))))
 
-        # TODO condition on z using cross attention
         # Adaptive Group Normalization
         t_s, t_b = self.time_emb(t).chunk(2, dim=1)
         z_s, z_b = self.z_emb(z).chunk(2, dim=1)

@@ -286,3 +286,18 @@ def linear_warmup_lr(epoch, base_lr, warmup_epochs):
     return base_lr
     
     
+def compute_grad_norm_stats(model):
+    # Collect all gradient norms
+    grad_norms = []
+    for param in model.parameters():
+        if param.grad is not None:  # Ensure the parameter has a gradient
+            grad_norms.append(param.grad.norm(2).item())  # Compute the L2 norm of the gradient
+    
+    if grad_norms:
+        max_grad_norm = max(grad_norms)  # Maximum gradient norm
+        avg_grad_norm = sum(grad_norms) / len(grad_norms)  # Average gradient norm
+    else:
+        max_grad_norm = 0.0
+        avg_grad_norm = 0.0
+
+    return max_grad_norm, avg_grad_norm

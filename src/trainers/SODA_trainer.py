@@ -162,7 +162,7 @@ class SODATrainer():
             self.linear_probe = LinearProbe(train_set=dataset.get_train_set().get_source_dataset(),
                                             test_set=dataset.get_test_set().get_source_dataset(),
                                             num_classes=dataset.get_num_classes(),
-                                            batch_size=512,
+                                            batch_size=1024,
                                             epoch=6)
         
         
@@ -206,6 +206,8 @@ class SODATrainer():
         
         epoch_start_time = time.time()
         epoch_train_loss = misc_utils.AverageMeter()
+        max_grad_norm = 0.0
+        avg_grad_norm = misc_utils.AverageMeter()
         
         loss_ema = None
         for i, (source_batch, target_batch) in tqdm(enumerate(self.train_dataloader), total=self.num_train_batches, desc="Processing Training Epoch {}".format(self.epoch+1)):
@@ -222,6 +224,10 @@ class SODATrainer():
             self.grad_scaler.scale(loss).backward()
             # Step optimizer and update scaler
             self.grad_scaler.unscale_(self.optim)
+            max_grad, avg_grad = nn_utils.compute_grad_norm_stats(self.model)
+            if max_grad > max_grad_norm:
+                max_grad_norm = max_grad
+            avg_grad_norm.update(avg_grad)
             torch.nn.utils.clip_grad_norm_(parameters=self.model.parameters(), max_norm=self.grad_clip_norm)
             self.grad_scaler.step(self.optim)
             self.grad_scaler.update()
@@ -231,6 +237,7 @@ class SODATrainer():
             else: loss_ema = 0.95 * loss_ema + 0.05 * loss.item()
             epoch_train_loss.update(loss.item())
         
+        print(f"Max gradient norm is {max_grad_norm} and average gradient norm is {avg_grad_norm.avg}")
         print(f"Epoch{self.epoch + 1}/{self.max_epochs}, Training Loss: {epoch_train_loss.avg}, Time taken: {(time.time() - epoch_start_time)/60} minutes")
         self.avg_epoch_time.update(time.time() - epoch_start_time)
         

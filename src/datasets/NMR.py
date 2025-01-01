@@ -107,7 +107,8 @@ class ObjectDataset(Dataset):
         if self.transform:
             views = torch.stack([self.transform(view) for view in views], dim=0)
             
-        ray_grids = compute_ray_grids(obj_path.joinpath('cameras.npz'), H=self.img_size[0], W=self.img_size[1], use_canonical=True)
+        ray_grids = ray_grids = compute_ray_grids_for_views(obj_path.joinpath('cameras.npz'), H=self.img_size[0],
+                                                W=self.img_size[1], views_idx=np.arange(24), use_canonical=True)
         
         return views, ray_grids, label
     
