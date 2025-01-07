@@ -10,7 +10,7 @@ from src.metric import LinearProbe
 from src.datasets import NMR
 from src.utils import nn_utils
 
-from torchmetrics.image.fid import FrechetInceptionDistance
+from torchmetrics.image import FrechetInceptionDistance, StructuralSimilarityIndexMeasure
 
 from pathlib import Path
 from functools import partial
@@ -66,7 +66,8 @@ def eval_FID(model, dataset, device, use_amp=False):
         x_gen = fid_preprocess(x_gen)
         
         fid_metric.update(x_real.to('cpu'), real=True)
-        fid_metric.update(x_gen.to('cpu'), real=False)
+        # fid_metric.update(x_gen.to('cpu'), real=False)
+        fid_metric.update(x_real.to('cpu'), real=False)
     
         fid_score = fid_metric.compute()
         print(f"FID score: {fid_score.item()}")
@@ -75,11 +76,45 @@ def eval_FID(model, dataset, device, use_amp=False):
     print(f"Final FID score: {fid_score.item()}")
         
     
+
+@torch.inference_mode()
+def eval_SSIM(model, dataset, device, use_amp=False):
+    model.eval()
+    ssim = StructuralSimilarityIndexMeasure(gaussian_kernel=False, data_range=1.0)
     
+    dataset.set_batch_size(4)
+    num_targets = 24
+    dataset.get_test_set().get_target_dataset().set_num_views(num_targets)
+    test_loader = dataset.get_test_dataloader()
+    
+    img_size = dataset.img_size
+    
+    def prepare_batch(batch):
+        return [item.to(device) for item in batch]
+    
+    ssim_preprocess = transforms.Compose([
+        transforms.Lambda(lambda x: (x+1)/2)
+    ])
+    
+    for i, (source_batch, target_batch) in tqdm(enumerate(test_loader), total=len(test_loader), desc="Evaluating the model with SSIM score."):
+        x_source, c_source, labels_s = prepare_batch(source_batch)
+        x_targets, c_targets, labels_ts = prepare_batch(target_batch)
+        
+        x_targets = x_targets.view(-1, 3, *img_size)
+        c_targets = c_targets.view(-1, *img_size, 6)
+        
+        z_guide = model.encode(x_source, c_source, norm=False, use_amp=use_amp)
+        z_guide = z_guide.repeat_interleave(num_targets, dim=0)
+        x_gen = model.ddim_sample(z_guide.shape[0], z_guide, c_targets, use_amp=use_amp)
+        
+        x_real = ssim_preprocess(x_targets).to('cpu')
+        x_gen = ssim_preprocess(x_gen).to('cpu')
+        
+        print(ssim(x_gen, x_real))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--type", help="Type of evaluation to perform.", type=str, choices=['lp', 'FID'], default='lp')
+    parser.add_argument("--type", help="Type of evaluation to perform.", type=str, choices=['lp', 'FID', 'SSIM'], default='lp')
     parser.add_argument('-c', '--config', help="Configuration to used for training the model.", type=str, default='NMR.yaml')
     parser.add_argument("--model", help="Which model to use for sampling between EMA and online model.", type=str, choices=['EMA', 'online'], default='EMA')
     
@@ -123,3 +158,6 @@ if __name__ == '__main__':
         eval_linear_probe(model, nmr, device, use_amp)
     elif args.type == 'FID':
         eval_FID(model, nmr, device, use_amp)
+        
+    elif args.type == 'SSIM':
+        eval_SSIM(model, nmr, device, use_amp)

@@ -25,17 +25,20 @@ def synthesis_views(model, sampling_method, dataset, object_idx, steps, num_sour
         x_gen = sampling_method(num_target_views, z_guide, target_cs.to(device), steps=steps, guide_w=10, use_amp=use_amp)
     x_real = (target_views.cpu() + 1) / 2
     x_gen = (x_gen.cpu() + 1) / 2
+    x_source = dataset.denormalize(source_view.cpu())
     
-    grid = torchvision.utils.make_grid(torch.cat([x_gen, x_real]), nrow=6)
-    torchvision.utils.save_image(grid, Path('outputs/sampled_GIFs').joinpath(f"{object_index}-images.png"))
     
-    return source_view, x_gen.permute(0, 2, 3, 1), x_real.permute(0, 2, 3, 1)
+    return x_source, x_gen, x_real
 
 
 
 def generate_GIF(tensor, path):
     tensor = (tensor.numpy() * 255).astype(np.uint8)
     imageio.mimsave(path, tensor, fps=10)
+    
+def torch_save_as_grid_image(tensor, path):
+    grid = torchvision.utils.make_grid(tensor, nrow=6)
+    torchvision.utils.save_image(grid, path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -93,8 +96,15 @@ if __name__ == '__main__':
     if args.objidx == -1: object_index = np.random.randint(0, nmr.get_test_set().get_source_dataset().__len__())
     else: object_index = args.objidx
     
-    source_view, x_gen, x_real = synthesis_views(model, sampling_method, nmr, object_index, NFE/2, num_source_views, num_target_views, device, use_amp)
-    generate_GIF(x_gen, saving_dir.joinpath(f"{object_index}-gen.gif"))
-    generate_GIF(x_real, saving_dir.joinpath(f"{object_index}-real.gif"))
+    x_source, x_gen, x_real = synthesis_views(model, sampling_method, nmr, object_index, NFE/2, num_source_views, num_target_views, device, use_amp)
+    
+    # x_gen.permute(0, 2, 3, 1), x_real.permute(0, 2, 3, 1)
+    # torch.cat([x_gen, x_real])
+    # Path('outputs/sampled_GIFs').joinpath(f"{object_index}-images.png")
+    torchvision.utils.save_image(x_source, saving_dir.joinpath(f"{object_index}-source.png"))
+    torch_save_as_grid_image(x_real, saving_dir.joinpath(f"{object_index}-real.png"))
+    torch_save_as_grid_image(x_gen, saving_dir.joinpath(f"{object_index}-gen.png"))
+    generate_GIF(x_gen.permute(0, 2, 3, 1), saving_dir.joinpath(f"{object_index}-gen.gif"))
+    generate_GIF(x_real.permute(0, 2, 3, 1), saving_dir.joinpath(f"{object_index}-real.gif"))
     print(f"The sampled views was saved at {saving_dir}/{object_index}-*.*")
     

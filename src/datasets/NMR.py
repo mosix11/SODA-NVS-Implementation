@@ -237,15 +237,10 @@ class NMR():
         self._init_loaders()
     
     def denormalize(self, batch_tensor):
-        """
-        Denormalize a batch of tensor images channel-wise using the provided mean and std.
-        Assumes the input is a normalized tensor with shape [B, C, H, W].
-        The mean and std should be lists or tensors of length equal to the number of channels.
-        """
-        mean = torch.tensor(self.dataset_mean).view(1, -1, 1, 1)  # Reshape to [1, C, 1, 1] for broadcasting
-        std = torch.tensor(self.dataset_std).view(1, -1, 1, 1)    # Reshape to [1, C, 1, 1] for broadcasting
-        batch_tensor = batch_tensor * std + mean     # Apply channel-wise denormalization
-        return torch.clip(batch_tensor, 0, 1)        # Clip values to [0, 1]
+        mean = torch.tensor(self.dataset_mean).view(1, -1, 1, 1)
+        std = torch.tensor(self.dataset_std).view(1, -1, 1, 1)  
+        batch_tensor = batch_tensor * std + mean  
+        return torch.clip(batch_tensor, 0, 1)
     
     
     

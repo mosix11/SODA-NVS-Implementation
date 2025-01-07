@@ -34,5 +34,5 @@ if __name__ == '__main__':
     )
     trainer = SODATrainer(**cfg['trainer'])
     trainer.fit(soda, nmr, resume=False)
-    torch.save(soda, weights_dir.joinpath('soda.pt'))
-    torch.save(trainer.get_EMA(), weights_dir.joinpath('soda_ema.pt'))
+    torch.save(soda.state_dict(), weights_dir.joinpath('soda.pt'))
+    torch.save(trainer.get_EMA().state_dict(), weights_dir.joinpath('soda_ema.pt'))

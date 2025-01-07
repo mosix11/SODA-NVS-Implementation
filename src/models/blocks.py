@@ -7,7 +7,6 @@ from flash_attn import flash_attn_qkvpacked_func
 
 
 
-from einops import rearrange, reduce, repeat
 from einops.layers.torch import Rearrange
 
 import os
@@ -246,29 +245,6 @@ class TimeEmbedding(nn.Module):
         emb = self.lin2(emb)
         return emb
     
-# class TimeEmbedding(nn.Module):
-#     def __init__(self, n_channels):
-#         """
-#         * `n_channels` is the number of dimensions in the embedding
-#         """
-#         super().__init__()
-#         self.n_channels = n_channels
-#         self.lin1 = nn.Linear(self.n_channels // 4, self.n_channels)
-#         self.act = nn.SiLU()
-#         self.lin2 = nn.Linear(self.n_channels, self.n_channels)
-
-#     def forward(self, t):
-#         # Create sinusoidal position embeddings (same as those from the transformer)
-#         half_dim = self.n_channels // 8
-#         emb = torch.log(torch.tensor(10_000)) / (half_dim - 1)
-#         emb = torch.exp(torch.arange(half_dim, dtype=torch.float32, device=t.device) * -emb)
-#         emb = t.float()[:, None] * emb[None, :]
-#         emb = torch.cat((emb.sin(), emb.cos()), dim=1)
-
-#         # Transform with the MLP
-#         emb = self.act(self.lin1(emb))
-#         emb = self.lin2(emb)
-#         return emb
     
 
 class LatentEmbedding(nn.Module):

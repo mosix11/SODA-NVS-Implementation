@@ -4,7 +4,9 @@ import torch.nn.functional as F
 import torchvision
 
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+# from torch.optim.lr_scheduler import 
+
+import torchvision.transforms.v2 as transforms 
 
 from torch.amp import GradScaler
 
@@ -22,7 +24,9 @@ import time
 from tqdm import tqdm
 from functools import partial
 
+from torchmetrics.image import StructuralSimilarityIndexMeasure, FrechetInceptionDistance
 from ..metric import LinearProbe
+
 from ..utils import nn_utils, misc_utils
 
 class SODATrainer():
@@ -42,6 +46,8 @@ class SODATrainer():
                  ema_decay:float = 0.9999,
                  
                  linear_prob_freq_e:int = 10,
+                 ssim_eval_freq_e:int = 1,
+                 fid_eval_freq_e:int = 1,
                  sampling_freq_e:int = 10,
                  
                  outputs_dir:Path = Path('./outputs'),
@@ -69,6 +75,8 @@ class SODATrainer():
         self.warmup_epochs = warmup_epochs
         self.sampling_freq_e = sampling_freq_e if sampling_freq_e != 0 or sampling_freq_e is not None else None
         self.linear_prob_freq_e = linear_prob_freq_e if linear_prob_freq_e != 0 or linear_prob_freq_e is not None else None
+        self.ssim_eval_freq_e = ssim_eval_freq_e if ssim_eval_freq_e !=0 or ssim_eval_freq_e is not None else None
+        self.fid_eval_freq_e = fid_eval_freq_e if fid_eval_freq_e != 0 or fid_eval_freq_e is not None else None
         
         self.optimizer_type = optimizer_type
         self.enc_lr = enc_lr
@@ -162,10 +170,17 @@ class SODATrainer():
             self.linear_probe = LinearProbe(train_set=dataset.get_train_set().get_source_dataset(),
                                             test_set=dataset.get_test_set().get_source_dataset(),
                                             num_classes=dataset.get_num_classes(),
-                                            batch_size=1024,
+                                            batch_size=512,
                                             epoch=6)
         
+        if self.ssim_eval_freq_e:
+            self.ssim = StructuralSimilarityIndexMeasure(gaussian_kernel=False, data_range=(-1, 1))
         
+        if self.fid_eval_freq_e:
+            self.fid = FrechetInceptionDistance(feature=2048, normalize=True)
+            self.fid_preprocess = transforms.Compose([
+                transforms.Resize((299, 299)),
+            ])
         
     def fit(self, SODA, dataset, resume=False):
         self.setup_data_loaders(dataset)
@@ -285,11 +300,24 @@ class SODATrainer():
             print("LinearProbe accuracy =", lp_acc)
             
         if self.sampling_freq_e and (self.epoch+1) % self.sampling_freq_e == 0:
+            ssim_score = misc_utils.AverageMeter()
             for s in range(4):
-                self.synthesis_views(s)
+                x_real, x_gen =  self.synthesis_views(s)
+                x_all = torch.cat([x_gen, x_real])
+                if self.write_sum:
+                    self.writer.add_images(f"Synthetized Views of Object {s}", x_all, global_step=0)
+                grid = torchvision.utils.make_grid(x_all, nrow=6)
+                torchvision.utils.save_image(grid, self.generated_samples_dir.joinpath(f"epoch_{self.epoch+1}_image_{s}_{datetime.datetime.now()}_ema.png"))
+                ssim_score.update(self.ssim(x_gen, x_real))
+                self.fid.update(x_gen, real=False)
+                self.fid.update(x_real, real=True)
             
-            
-            
+            fid_score = self.fid.compute()
+            ssim_score = ssim_score.avg
+            if self.write_sum:
+                self.writer.add_scalar('Metrics/FID', fid_score.item(), self.epoch)
+                self.writer.add_scalar('Metrics/SSIM', ssim_score, self.epoch)
+                
     def synthesis_views(self, object_idx, num_source_views=1, num_target_views=24):
         self.ema.ema_model.eval()
         ema_sample_method = self.ema.ema_model.ddim_sample
@@ -307,11 +335,8 @@ class SODATrainer():
         # followed by real images (bottom rows)
         x_real = (target_views.cpu() + 1) / 2
         x_gen = (x_gen.cpu() + 1) / 2
-        x_all = torch.cat([x_gen, x_real])
-        if self.write_sum:
-            self.writer.add_images(f"Synthetized Views of Object {object_idx}", x_all, global_step=0)
-        grid = torchvision.utils.make_grid(x_all, nrow=6)
-        torchvision.utils.save_image(grid, self.generated_samples_dir.joinpath(f"epoch_{self.epoch+1}_image_{object_idx}_{datetime.datetime.now()}_ema.png"))
+        return x_real, x_gen
+        
             
                 
             
