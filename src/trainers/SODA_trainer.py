@@ -3,8 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
-from torch.optim import AdamW
-# from torch.optim.lr_scheduler import 
+from torch.optim import AdamW, Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import torchvision.transforms.v2 as transforms 
 
@@ -34,7 +34,8 @@ class SODATrainer():
     def __init__(self, 
                  max_epochs:int=400,
                  warmup_epochs:int = 20,
-                 warmup_strategy:str = 'linear',
+                 warmup_strategy:str = 'lin',
+                 lr_schedule_strategy:str = 'cos',
                  
                  optimizer_type:str = 'adamw',
                  enc_lr:float = 1e-4,
@@ -85,15 +86,10 @@ class SODATrainer():
         self.optim_betas = (beta1, beta2)
         self.grad_clip_norm = grad_clip_norm
         
-        if warmup_strategy == "cosine":
-            self.enc_warmup_fn = lambda ep: nn_utils.cosine_warmup_lr(ep, self.enc_lr, warmup_epochs, max_epochs)
-            self.dec_warmup_fn = lambda ep: nn_utils.cosine_warmup_lr(ep, self.dec_lr, warmup_epochs, max_epochs)
-        elif warmup_strategy == "exponential":
-            self.enc_warmup_fn = lambda ep: nn_utils.exponential_warmup_lr(ep, self.enc_lr, warmup_epochs)
-            self.dec_warmup_fn = lambda ep: nn_utils.exponential_warmup_lr(ep, self.dec_lr, warmup_epochs)
-        else:  # Default to linear
-            self.enc_warmup_fn = lambda ep: nn_utils.linear_warmup_lr(ep, self.enc_lr, warmup_epochs)
-            self.dec_warmup_fn = lambda ep: nn_utils.linear_warmup_lr(ep, self.dec_lr, warmup_epochs)
+        self.lr_schedule_strategy = lr_schedule_strategy
+        self.warmup_epochs = warmup_epochs
+        self.warmup_strategy = warmup_strategy
+        
                 
         self.ema_decay = ema_decay
         
@@ -130,6 +126,7 @@ class SODATrainer():
             model.load_model_params(enc_state_dict, dec_state_dict)
         if self.run_on_gpu:
             model.set_device(self.gpu)
+            model.compile_models()
         self.model = model
         
     def prepare_EMA(self, model, ema_state_dict=None):
@@ -145,15 +142,15 @@ class SODATrainer():
     def get_EMA(self):
         return self.ema
         
-    def configure_optimizers(self, optim_state_dict=None):
+    def configure_optimizers(self, optim_state_dict=None, last_epoch=-1):
         if self.optimizer_type == "adamw":
-            optim = torch.optim.AdamW([
+            optim = AdamW([
                 {'params': self.model.get_encoder().parameters(), 'lr': self.enc_lr},
                 {'params': self.model.get_decoder().parameters(), 'lr': self.dec_lr}
                 ], betas=self.optim_betas, weight_decay=self.weight_decay)
 
         elif self.optimizer_type == "adam":
-            optim = torch.optim.Adam([
+            optim = Adam([
                 {'params': self.model.get_encoder().parameters(), 'lr': self.enc_lr},
                 {'params': self.model.get_decoder().parameters(), 'lr': self.dec_lr}
                 ], betas=self.optim_betas, weight_decay=self.weight_decay)
@@ -161,6 +158,13 @@ class SODATrainer():
             raise RuntimeError("Invalide optimizer type")
         if optim_state_dict:
             optim.load_state_dict(optim_state_dict)
+             
+        if self.lr_schedule_strategy == 'cos':
+            self.lr_scheduler = nn_utils.CustomWarmupLRScheduler(optim,
+                                                                 CosineAnnealingLR(optim, T_max=self.max_epochs, eta_min=1e-7, last_epoch=last_epoch),
+                                                                 warmup_epochs=self.warmup_epochs,
+                                                                 total_epochs=self.max_epochs,
+                                                                 last_epoch=last_epoch)
              
         self.optim = optim
         
@@ -174,7 +178,7 @@ class SODATrainer():
                                             epoch=6)
         
         if self.ssim_eval_freq_e:
-            self.ssim = StructuralSimilarityIndexMeasure(gaussian_kernel=False, data_range=(-1, 1))
+            self.ssim = StructuralSimilarityIndexMeasure(gaussian_kernel=False, data_range=1.0)
         
         if self.fid_eval_freq_e:
             self.fid = FrechetInceptionDistance(feature=2048, normalize=True)
@@ -190,7 +194,7 @@ class SODATrainer():
                 raise RuntimeError('There is no checkpoint saved! Set the `resume` flag to False.')
             checkpoint = torch.load(ckp_path)
             self.prepare_model(SODA, checkpoint['enc_state'], checkpoint['dec_state'])
-            self.configure_optimizers(checkpoint['optim_state'])
+            self.configure_optimizers(checkpoint['optim_state'], last_epoch=checkpoint['epoch'])
             self.prepare_EMA(SODA, checkpoint['ema_state'])
             self.epoch = checkpoint['epoch']
         else:
@@ -202,7 +206,6 @@ class SODATrainer():
         self.setup_metrics(dataset)
         
         self.grad_scaler = GradScaler('cuda', enabled=self.use_amp)
-        self.avg_epoch_time = misc_utils.AverageMeter()
         
         for self.epoch in range(self.epoch, self.max_epochs):
             self.fit_epoch()
@@ -215,9 +218,6 @@ class SODATrainer():
         
         # ******** Training Part ********
         self.model.train()
-        
-        self.optim.param_groups[0]['lr'] = self.enc_warmup_fn(self.epoch)
-        self.optim.param_groups[1]['lr'] = self.dec_warmup_fn(self.epoch)
         
         epoch_start_time = time.time()
         epoch_train_loss = misc_utils.AverageMeter()
@@ -247,20 +247,23 @@ class SODATrainer():
             self.grad_scaler.step(self.optim)
             self.grad_scaler.update()
             
+            
             self.ema.update()
             if loss_ema is None: loss_ema = loss.item()
             else: loss_ema = 0.95 * loss_ema + 0.05 * loss.item()
             epoch_train_loss.update(loss.item())
         
-        print(f"Max gradient norm is {max_grad_norm} and average gradient norm is {avg_grad_norm.avg}")
-        print(f"Epoch{self.epoch + 1}/{self.max_epochs}, Training Loss: {epoch_train_loss.avg}, Time taken: {(time.time() - epoch_start_time)/60} minutes")
-        self.avg_epoch_time.update(time.time() - epoch_start_time)
+        self.lr_scheduler.step()
+        
+        print(f"Epoch{self.epoch + 1}/{self.max_epochs}, Training Loss: {epoch_train_loss.avg}, Time taken: {int((time.time() - epoch_start_time)//60)}:{int((time.time() - epoch_start_time)%60)} minutes")
         
         if self.write_sum:
             self.writer.add_scalar('Loss/Train', epoch_train_loss.avg, self.epoch)
             self.writer.add_scalar('Loss/EMA', loss_ema, self.epoch)
             self.writer.add_scalar('LR/Encoder', self.optim.param_groups[0]['lr'], self.epoch)
             self.writer.add_scalar('LR/Decoder', self.optim.param_groups[1]['lr'], self.epoch)
+            self.writer.add_scalar('Stat/Maximum Gradient Norm', max_grad_norm, self.epoch)
+            self.writer.add_scalar('Stat/Average Gradient Norm', avg_grad_norm.avg, self.epoch)
             
         # ******** Saving Checkpoint ********
         if (self.epoch+1) % 50 == 0:
@@ -309,8 +312,8 @@ class SODATrainer():
                 grid = torchvision.utils.make_grid(x_all, nrow=6)
                 torchvision.utils.save_image(grid, self.generated_samples_dir.joinpath(f"epoch_{self.epoch+1}_image_{s}_{datetime.datetime.now()}_ema.png"))
                 ssim_score.update(self.ssim(x_gen, x_real))
-                self.fid.update(x_gen, real=False)
-                self.fid.update(x_real, real=True)
+                self.fid.update(self.fid_preprocess(x_gen), real=False)
+                self.fid.update(self.fid_preprocess(x_real), real=True)
             
             fid_score = self.fid.compute()
             ssim_score = ssim_score.avg

@@ -286,6 +286,47 @@ def linear_warmup_lr(epoch, base_lr, warmup_epochs):
     return base_lr
     
     
+from torch.optim.lr_scheduler import _LRScheduler
+class CustomWarmupLRScheduler(_LRScheduler):
+    def __init__(self, optimizer, base_scheduler, warmup_strategy="lin", warmup_epochs=10, total_epochs=100, last_epoch=-1):
+        """
+        Custom learning rate scheduler with warm-up strategies and integration with a PyTorch scheduler.
+
+        Args:
+            optimizer (Optimizer): Optimizer to be wrapped.
+            base_scheduler (_LRScheduler): Base PyTorch scheduler (e.g., StepLR, CosineAnnealingLR).
+            warmup_strategy (str): Warm-up strategy to use (`lin`, `exp`, `cos`). Defaults to `lin`.
+            warmup_epochs (int): Number of warmup epochs. Defaults to 10.
+            total_epochs (int): Total number of epochs. Defaults to 100.
+            last_epoch (int): The index of the last epoch. Defaults to -1.
+        """
+        self.base_scheduler = base_scheduler
+        self.warmup_strategy = warmup_strategy
+        self.warmup_epochs = warmup_epochs
+        self.total_epochs = total_epochs
+        super(CustomWarmupLRScheduler, self).__init__(optimizer, last_epoch)
+
+    def _get_warmup_lr(self, epoch, base_lr):
+        if self.warmup_strategy == "cos":
+            return cosine_warmup_lr(epoch, base_lr, self.warmup_epochs, self.total_epochs)
+        elif self.warmup_strategy == "exp":
+            return exponential_warmup_lr(epoch, base_lr, self.warmup_epochs)
+        else:  # Default to linear warm-up
+            return linear_warmup_lr(epoch, base_lr, self.warmup_epochs)
+
+    def get_lr(self):
+        epoch = self.last_epoch + 1
+        if epoch < self.warmup_epochs:
+            return [self._get_warmup_lr(epoch, base_lr) for base_lr in self.base_lrs]
+        else:
+            # Step into the base scheduler after warmup
+            return self.base_scheduler.get_last_lr()
+
+    def step(self, epoch=None):
+        super(CustomWarmupLRScheduler, self).step(epoch)
+        if self.last_epoch >= self.warmup_epochs:
+            self.base_scheduler.step(epoch - self.warmup_epochs if epoch is not None else None)
+    
 def compute_grad_norm_stats(model):
     # Collect all gradient norms
     grad_norms = []

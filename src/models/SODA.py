@@ -58,6 +58,9 @@ class SODA(nn.Module):
         self.encoder.to(device)
         self.decoder.to(device)
         
+    def compile_models(self):
+        self.encoder = torch.compile(self.encoder)
+        
     def load_model_params(self, enc_state_dict=None, dec_state_dict=None):
         if enc_state_dict: self.encoder.load_state_dict(enc_state_dict)
         if dec_state_dict: self.decoder.load_state_dict(dec_state_dict)

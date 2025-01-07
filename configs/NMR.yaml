@@ -21,7 +21,7 @@
 
 
 dataset: # 'NMR'
-  batch_size: 24
+  batch_size: 16
   img_size: [64, 64]
   num_views: 2 # If this is greater than 2 then 1 random view would treated as target view and `num_views-1` views will be source views (latents will be aggregated)
   num_workers: 12 # Set based on the CPU cores
@@ -41,9 +41,9 @@ denoiser: # The U-Net denoiser configuration
   z_dim: *z_dim # Must match encoder.z_dim
   c_dim: *c_dim # Must match encoder.c_dim
   c_pos_emb_freq: *c_pos_emb_freq # Must match encoder.c_pos_emb_freq
-  n_channels: 128 # Number of channels in the initial feature map that we transform the image into.
-  ch_mults: [1, 2, 2, 4] # The list of channel numbers at each resolution. The number of channels is `n_channels * ch_mults[i]`
-  is_attn: [False, True, True, True] # The list of booleans that indicate whether to use attention at each resolution
+  n_channels: 256 # Number of channels in the initial feature map that we transform the image into.
+  ch_mults: [1, 2, 2, 2] # The list of channel numbers at each resolution. The number of channels is `n_channels * ch_mults[i]`
+  is_attn: [False, True, True, False] # The list of booleans that indicate whether to use attention at each resolution
   attn_channels_per_head: 8 # Number of channels each attention head.
   dropout: 0.1 # The dropout rate used in the blocks of the unet.
   n_blocks: 2 # The number of ResNet blocks at each resolution.
@@ -60,9 +60,9 @@ SODA:
 trainer:
   max_epochs: 800
   warmup_epochs: 20
-  warmup_strategy: 'linear' # Between `linear`, `cosine`, and `exponential`
+  warmup_strategy: 'lin' # Between `lin`, `cos`, and `exp`
   optimizer_type: 'adamw' # Between `adamw` and `adam` !! currentrly the model does not converge with adam and I don't know why!!!!!
-  enc_lr: 2.0e-4 # Learning rate of the encoder
+  enc_lr: 3.0e-4 # Learning rate of the encoder
   enc_dec_lr_ratio: 2 # The ratio of encoder learning rate over denoiser learning rate
   weight_decay: 0.05 # Optimizer weight decay
   beta1: 0.9
