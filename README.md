@@ -76,6 +76,7 @@ To sample all 24 views of an object from the test set, you can run the sample sc
 python sample.py --objidx 1000
 ```
 
+<p align="center">
 <div style="display: flex; flex-direction: column; align-items: center; gap: 20px;">
     <!-- First Line: Three Images -->
     <div style="display: flex; justify-content: space-between; width: 100%; max-width: 1000px;">
@@ -88,6 +89,7 @@ python sample.py --objidx 1000
         <img src="media/samples/1000-gen.gif" style="width: 200px; height: auto;">
     </div>
 </div>
+</p>
 
 ### Evaluation
 
