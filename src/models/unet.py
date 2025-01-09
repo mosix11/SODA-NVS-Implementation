@@ -8,6 +8,8 @@ from .blocks import TimeEmbedding, LatentEmbedding, RayEncoder
 from .blocks import Upsample, Downsample, ResidualBlock
 from .blocks import DownsampleResBlock, UpsampleResBlock, ResAttBlock, MiddleBlock
 
+# The main body is taken from https://github.com/FutureXiang/soda/tree/main with modification to match the NVS task
+
 class UNet(nn.Module):
     def __init__(self, 
                  img_shape:tuple = (3, 32, 32), 

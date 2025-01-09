@@ -11,7 +11,7 @@ from einops.layers.torch import Rearrange
 
 import os
 
-
+# Some modules are taken from https://github.com/FutureXiang/soda/tree/main with modification to match the NVS task
 
 class Upsample(nn.Module):
     def __init__(self, n_channels, use_conv=True):

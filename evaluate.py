@@ -22,6 +22,7 @@ import argparse
 import yaml
 from tqdm import tqdm
 
+import subprocess
 
 def eval_linear_probe(model, dataset, device, use_amp=False):
     linear_probe = LinearProbe(train_set=dataset.get_train_set().get_source_dataset(),
@@ -100,12 +101,12 @@ def eval_FID(model, dataset, device, use_amp=False):
     
     img_size = dataset.img_size
     fid_preprocess = transforms.Compose([
-        transforms.Resize((299, 299)),
+        # transforms.Resize((299, 299)),
         transforms.Lambda(lambda x: (x+1)/2),
     ])
     to_pil = transforms.ToPILImage()
     
-    num_batches = 2
+    num_batches = 10
     for i, (source_batch, target_batch) in tqdm(enumerate(test_loader), total=len(test_loader), desc="Evaluating the model with FID score."):
         x_source, c_source, labels_s = prepare_batch(source_batch)
         x_targets, c_targets, labels_ts = prepare_batch(target_batch)
@@ -134,7 +135,21 @@ def eval_FID(model, dataset, device, use_amp=False):
         if i + 1 >= num_batches:
             break
         
-    # CUDA_VISIBLE_DEVICES=0 pytorch-fid outputs/fid_temp_dir/real outputs/fid_temp_dir/gen
+    cli_command = [
+        "CUDA_VISIBLE_DEVICES=0", 
+        "pytorch-fid", 
+        "outputs/fid_temp_dir/real", 
+        "outputs/fid_temp_dir/gen"
+    ]
+    result = subprocess.run(
+        " ".join(cli_command),  
+        shell=True,        
+        capture_output=True, 
+        text=True
+    )
+    print(result.stdout)
+    # print("Standard Error:", result.stderr)
+    print("Exit Code:", result.returncode)
 
 @torch.inference_mode()
 def eval_SSIM(model, dataset, device, use_amp=False):
