@@ -3,13 +3,16 @@ import torch
 import torchvision
 import numpy as np
 
+from ema_pytorch import EMA
+
 from pathlib import Path
 import argparse
 import imageio.v2 as imageio
 import yaml
+from PIL import Image
 
 from src.datasets import NMR
-from src.models import SODA
+from src.models import SODA, SodaEncoder, UNet
 
 from visualization import plot_multiple_views
 from src.utils import nn_utils
@@ -31,11 +34,12 @@ def synthesis_views(model, sampling_method, dataset, object_idx, steps, num_sour
     return x_source, x_gen, x_real
 
 
-
 def generate_GIF(tensor, path):
     tensor = (tensor.numpy() * 255).astype(np.uint8)
-    imageio.mimsave(path, tensor, fps=10)
-    
+    imageio.mimwrite(path, tensor, fps=10, loop=0)
+
+
+        
 def torch_save_as_grid_image(tensor, path):
     grid = torchvision.utils.make_grid(tensor, nrow=6)
     torchvision.utils.save_image(grid, path)
@@ -60,7 +64,17 @@ if __name__ == '__main__':
     model = None
     weights_path = weights_dir.joinpath('soda_ema.pt')
     if not weights_path.exists(): raise RuntimeError('There is no saved weights for the model. You have to train the model first!!!!')
-    ema_model = torch.load(weights_path)
+    
+    encoder = SodaEncoder(**cfg['encoder'])
+    denoiser = UNet(**cfg['denoiser'])
+    soda = SODA(
+        encoder=encoder,
+        decoder=denoiser,
+        **cfg['SODA']
+    )
+    ema_model = EMA(soda, beta=cfg['trainer']['ema_decay'], update_after_step=0, update_every=1)
+    weights = torch.load(weights_path)
+    ema_model.load_state_dict(weights)
     if args.model == 'EMA':
         model = ema_model.ema_model 
     elif args.model == 'online':
@@ -73,10 +87,10 @@ if __name__ == '__main__':
         
     NFE = args.nfe
     
-    model.eval()
+    
     nmr = NMR(**cfg['dataset'])
     
-    saving_dir = Path('outputs/sampled_GIFs')
+    saving_dir = Path('outputs/sampled_data')
     saving_dir.mkdir(exist_ok=True)
     
     device = nn_utils.get_gpu_device()
@@ -89,6 +103,9 @@ if __name__ == '__main__':
         torch.backends.cudnn.benchmark = True
         torch.set_float32_matmul_precision('high')
         use_amp = True
+        
+    model.set_device(device)
+    model.eval()
     
     num_source_views = args.sources
     num_target_views = 24
@@ -98,9 +115,6 @@ if __name__ == '__main__':
     
     x_source, x_gen, x_real = synthesis_views(model, sampling_method, nmr, object_index, NFE/2, num_source_views, num_target_views, device, use_amp)
     
-    # x_gen.permute(0, 2, 3, 1), x_real.permute(0, 2, 3, 1)
-    # torch.cat([x_gen, x_real])
-    # Path('outputs/sampled_GIFs').joinpath(f"{object_index}-images.png")
     torchvision.utils.save_image(x_source, saving_dir.joinpath(f"{object_index}-source.png"))
     torch_save_as_grid_image(x_real, saving_dir.joinpath(f"{object_index}-real.png"))
     torch_save_as_grid_image(x_gen, saving_dir.joinpath(f"{object_index}-gen.png"))

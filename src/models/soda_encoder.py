@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torchvision.models.resnet import resnet18, resnet50
-from .blocks import PoseEmbedding
+from .blocks import RayEncoder
 
 class SodaEncoder(nn.Module):
     
@@ -43,7 +43,7 @@ class SodaEncoder(nn.Module):
                     self.frist_channel_out = module.out_channels
                     
                     if c_dim:
-                        self.c_emb = PoseEmbedding(num_freqs=c_pos_emb_freq)
+                        self.c_emb = RayEncoder(pos_octaves=c_pos_emb_freq, dir_octaves=c_pos_emb_freq)
                         self.rgb_linear_projector = nn.Conv2d(self.first_channel_in, self.frist_channel_out, kernel_size=1)
                         self.first_channel_in = self.frist_channel_out + c_dim
                         
@@ -72,8 +72,8 @@ class SodaEncoder(nn.Module):
             cs = list(torch.unbind(c, dim=1)) # cs is a list of tensors of shape [B, H, W, D]
             zs = []
             for xi, ci in zip(xs, cs):
-                c_ = self.c_emb(ci)
-                c_ = c_.permute(0, 3, 1, 2)
+                pos, dirs = torch.split(ci, (3, 3), dim=-1)
+                c_ = self.c_emb(pos, dirs)
                 x_ = self.rgb_linear_projector(xi)
                 x_ = torch.cat((x_, c_), dim=1)
                 zi = self.encoder(x_)
@@ -83,8 +83,8 @@ class SodaEncoder(nn.Module):
             
             
         if c is not None:
-            c = self.c_emb(c)
-            c = c.permute(0, 3, 1, 2)
+            pos, dirs = torch.split(c, (3, 3), dim=-1)
+            c = self.c_emb(pos, dirs)
             x = self.rgb_linear_projector(x)
             x = torch.cat((x, c), dim=1)
         

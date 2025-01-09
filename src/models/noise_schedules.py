@@ -7,6 +7,8 @@ def linear_beta_schedule(timesteps, beta1, beta2):
     assert 0.0 < beta1 < beta2 < 1.0, "beta1 and beta2 must be in (0, 1)"
     return torch.linspace(beta1, beta2, timesteps)
 
+
+# Code from https://github.com/FutureXiang/soda/tree/main
 def cosine_beta_schedule(timesteps, s = 0.008):
     """
     cosine schedule
@@ -19,6 +21,8 @@ def cosine_beta_schedule(timesteps, s = 0.008):
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0, 0.999)
 
+
+# Code from https://github.com/FutureXiang/soda/tree/main
 def inverted_cosine_beta_schedule(timesteps, s = 0.008):
     """
     inverted cosine schedule
@@ -69,5 +73,4 @@ def get_schedule(beta_schedule, T, type='DDPM'):
         "sqrtmab": sqrtmab,
         "ma_over_sqrtmab": ma_over_sqrtmab,
     }
-    # return {key: dic[key].to(device) for key in dic}
     return dic

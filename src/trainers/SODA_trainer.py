@@ -126,7 +126,6 @@ class SODATrainer():
             model.load_model_params(enc_state_dict, dec_state_dict)
         if self.run_on_gpu:
             model.set_device(self.gpu)
-            model.compile_models()
         self.model = model
         
     def prepare_EMA(self, model, ema_state_dict=None):
@@ -318,7 +317,7 @@ class SODATrainer():
             fid_score = self.fid.compute()
             ssim_score = ssim_score.avg
             if self.write_sum:
-                self.writer.add_scalar('Metrics/FID', fid_score.item(), self.epoch)
+                self.writer.add_scalar('Metrics/FID', fid_score, self.epoch)
                 self.writer.add_scalar('Metrics/SSIM', ssim_score, self.epoch)
                 
     def synthesis_views(self, object_idx, num_source_views=1, num_target_views=24):

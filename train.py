@@ -13,6 +13,7 @@ from src.trainers import SODATrainer
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', help="Configuration to use for training the model.", type=str, default='NMR.yaml')
+    parser.add_argument('-r', '--resume', help="Resume training from the last checkpoint.", action="store_true")
     args = parser.parse_args()
     
     cfg_path = Path('configs').joinpath(args.config)
@@ -33,6 +34,6 @@ if __name__ == '__main__':
         **cfg['SODA']
     )
     trainer = SODATrainer(**cfg['trainer'])
-    trainer.fit(soda, nmr, resume=False)
-    # torch.save(soda.state_dict(), weights_dir.joinpath('soda.pt'))
-    # torch.save(trainer.get_EMA().state_dict(), weights_dir.joinpath('soda_ema.pt'))
+    trainer.fit(soda, nmr, resume=args.resume)
+    torch.save(soda.state_dict(), weights_dir.joinpath('soda.pt'))
+    torch.save(trainer.get_EMA().state_dict(), weights_dir.joinpath('soda_ema.pt'))

@@ -267,80 +267,60 @@ class LatentEmbedding(nn.Module):
         return z
 
 
-class PoseEmbedding(nn.Module):
-    def __init__(self,
-                 scale:float = 1e-4,
-                 num_freqs:int = 10 
-                ):
-        """
-        NeRF style postional encoding for wrold positions and directions
-        """
+# Coder from https://github.com/stelzner/srt/blob/main/srt/layers.py with minor modifications
+class FourierPositionalEncoding(nn.Module):
+    def __init__(self, num_octaves=8, start_octave=0):
         super().__init__()
+        self.num_octaves = num_octaves
+        self.start_octave = start_octave
 
-        self.scale = scale
-        self.num_freqs = num_freqs
-        
-    
-    def forward(self, c):
-        
-        c = self.pose_sinusoidal_encoding(c)
-        
-        return c
+    def forward(self, coords):
+        embed_fns = []
+        batch_size, num_points, dim = coords.shape
 
-    def pose_sinusoidal_encoding(self,
-        x: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        SODA-style sinusoidal encoding for rays (or any coordinates).
+        octaves = torch.arange(self.start_octave, self.start_octave + self.num_octaves)
+        octaves = octaves.float().to(coords)
+        multipliers = 2**octaves * torch.pi
+        coords = coords.unsqueeze(-1)
+        while len(multipliers.shape) < len(coords.shape):
+            multipliers = multipliers.unsqueeze(0)
 
-        Args:
-        x:          (..., D) tensor of coordinates; D can be 2, 3, 6, etc.
-        num_freqs:  number of frequency bands (L) for the encoding
-        scale:      's' hyperparameter, e.g. 0.0001 as in Table 12 of the paper
+        scaled_coords = coords * multipliers
 
-        Returns:
-        A tensor of shape (..., 2 * D * num_freqs), containing:
-            [
-            sin(1 * 2π * s * x), cos(1 * 2π * s * x),
-            sin(2 * 2π * s * x), cos(2 * 2π * s * x),
-            ...
-            up to 2^(num_freqs - 1)
-            ]
-        """
-        
-        num_freqs = self.num_freqs
-        scale = self.scale
-        
-        # 1) Remember the original shape so we can restore it later
-        orig_shape = x.shape
-        D = orig_shape[-1]  # last dimension is the coordinate dimension
+        sines = torch.sin(scaled_coords).reshape(batch_size, num_points, dim * self.num_octaves)
+        cosines = torch.cos(scaled_coords).reshape(batch_size, num_points, dim * self.num_octaves)
 
-        # 2) Flatten everything except the last dimension
-        x_flat = x.reshape(-1, D)  # shape (N, D)
-        n = x_flat.shape[0]     # number of flattened elements
+        result = torch.cat((sines, cosines), -1)
+        return result
 
-        # 3) Create frequency multipliers [1, 2, 4, ..., 2^(num_freqs-1)]
-        freqs = 2.0 ** torch.arange(num_freqs, dtype=torch.float32, device=x.device)
+class RayEncoder(nn.Module):
+    def __init__(self, pos_octaves=8, pos_start_octave=0, dir_octaves=8, dir_start_octave=0):
+        super().__init__()
+        self.pos_encoding = FourierPositionalEncoding(num_octaves=pos_octaves, start_octave=pos_start_octave)
+        self.ray_encoding = FourierPositionalEncoding(num_octaves=dir_octaves, start_octave=dir_start_octave)
 
-        # 4) Scale the input by (2π * s) and then multiply by each frequency
-        scaled_x = (2.0 * torch.pi * scale) * x_flat.unsqueeze(-1)  # (N, D, 1)
-        scaled_x = scaled_x * freqs.view(1, 1, num_freqs)          # (N, D, num_freqs)
+    def forward(self, pos, rays):
+        if len(rays.shape) == 4:
+            batchsize, height, width, dims = rays.shape
+            
+            pos = pos.flatten(1, 2)
+            pos_enc = self.pos_encoding(pos)
+            pos_enc = pos_enc.view(batchsize, height, width, pos_enc.shape[-1])
+            pos_enc = pos_enc.permute((0, 3, 1, 2))
+            
+            rays = rays.flatten(1, 2)
+            ray_enc = self.ray_encoding(rays)
+            ray_enc = ray_enc.view(batchsize, height, width, ray_enc.shape[-1])
+            ray_enc = ray_enc.permute((0, 3, 1, 2))
+            x = torch.cat((pos_enc, ray_enc), 1)
+        else:
+            pos_enc = self.pos_encoding(pos)
+            ray_enc = self.ray_encoding(rays)
+            x = torch.cat((pos_enc, ray_enc), -1)
 
-        # 5) Apply sin and cos
-        sin_x = torch.sin(scaled_x)  # (N, D, num_freqs)
-        cos_x = torch.cos(scaled_x)  # (N, D, num_freqs)
+        return x
 
-        # 6) Concatenate sin and cos => shape (N, D, 2*num_freqs)
-        enc = torch.cat([sin_x, cos_x], dim=-1)
 
-        # 7) Flatten out the D dimension => shape (N, 2*D*num_freqs)
-        enc = enc.view(n, -1)
-
-        # 8) Reshape back to (..., 2*D*num_freqs)
-        out_shape = list(orig_shape[:-1]) + [2 * D * num_freqs]
-        enc = enc.view(*out_shape)
-
-        return enc
     
     
 class ResidualBlock(nn.Module):

@@ -58,8 +58,6 @@ class SODA(nn.Module):
         self.encoder.to(device)
         self.decoder.to(device)
         
-    def compile_models(self):
-        self.encoder = torch.compile(self.encoder)
         
     def load_model_params(self, enc_state_dict=None, dec_state_dict=None):
         if enc_state_dict: self.encoder.load_state_dict(enc_state_dict)
@@ -154,6 +152,7 @@ class SODA(nn.Module):
         times = torch.arange(0, self.T, self.T // steps) + 1
         times = list(reversed(times.int().tolist())) + [0]
         time_pairs = list(zip(times[:-1], times[1:]))
+
         # e.g. [(801, 601), (601, 401), (401, 201), (201, 1), (1, 0)]
 
         for time, time_next in tqdm(time_pairs, disable=notqdm, desc="Sampling using DDIM"):
@@ -170,48 +169,48 @@ class SODA(nn.Module):
 
         return x_i
     
-    def ddpm_sample(self, n_sample, z_guide, c_cond, steps=100, guide_w=2, notqdm=False, use_amp=False):
-        ''' Sampling with DDPM sampler. Actual NFE is `steps`.
+    # def ddpm_sample(self, n_sample, z_guide, c_cond, steps=100, guide_w=2, notqdm=False, use_amp=False):
+    #     ''' Sampling with DDPM sampler. Actual NFE is `steps`.
 
-            Args:
-                n_sample: The batch size.
-                z_guide: The latent code extracted from real images (for guidance).
-                c_cond: Conditioning tensor for conditional generation.
-                guide_w: The CFG scale.
-            Returns:
-                The sampled image tensor ranged in `[-1, 1]`.
-        '''
-        size = self.dec_img_shape
-        sche = self.ddpm_sche  # Reuse the same schedule dictionary.
-        z_guide, mask = self.prepare_condition_(n_sample, z_guide)
-        x_i = torch.randn(n_sample, *size).to(self.device)
+    #         Args:
+    #             n_sample: The batch size.
+    #             z_guide: The latent code extracted from real images (for guidance).
+    #             c_cond: Conditioning tensor for conditional generation.
+    #             guide_w: The CFG scale.
+    #         Returns:
+    #             The sampled image tensor ranged in `[-1, 1]`.
+    #     '''
+    #     size = self.dec_img_shape
+    #     sche = self.ddpm_sche  # Reuse the same schedule dictionary.
+    #     z_guide, mask = self.prepare_condition_(n_sample, z_guide)
+    #     x_i = torch.randn(n_sample, *size).to(self.device)
 
-        times = torch.arange(0, self.T, self.T // steps) + 1
-        times = list(reversed(times.int().tolist())) + [0]
-        time_pairs = list(zip(times[:-1], times[1:]))
-        # e.g. [(801, 601), (601, 401), (401, 201), (201, 1), (1, 0)]
+    #     times = torch.arange(0, self.T, self.T // steps) + 1
+    #     times = list(reversed(times.int().tolist())) + [0]
+    #     time_pairs = list(zip(times[:-1], times[1:]))
+    #     # e.g. [(801, 601), (601, 401), (401, 201), (201, 1), (1, 0)]
 
-        for time, time_next in tqdm(time_pairs, disable=notqdm, desc="Sampling using DDPM"):
-            t_is = torch.tensor([time / self.T]).to(self.device).repeat(n_sample)
+    #     for time, time_next in tqdm(time_pairs, disable=notqdm, desc="Sampling using DDPM"):
+    #         t_is = torch.tensor([time / self.T]).to(self.device).repeat(n_sample)
 
-            alpha = sche["alphabar_t"][time]
-            alpha_next = sche["alphabar_t"][time_next]
+    #         alpha = sche["alphabar_t"][time]
+    #         alpha_next = sche["alphabar_t"][time_next]
 
-            # Predict epsilon and denoised image x0
-            eps, x0_t = self.pred_eps_(x_i, t_is, z_guide, mask, c_cond, guide_w, alpha, use_amp)
+    #         # Predict epsilon and denoised image x0
+    #         eps, x0_t = self.pred_eps_(x_i, t_is, z_guide, mask, c_cond, guide_w, alpha, use_amp)
 
-            # Compute the mean for the next step
-            mean = alpha_next.sqrt() * x0_t + (1 - alpha_next).sqrt() * eps
+    #         # Compute the mean for the next step
+    #         mean = alpha_next.sqrt() * x0_t + (1 - alpha_next).sqrt() * eps
 
-            # Add stochastic noise if not at the final step
-            if time_next > 0:
-                std_dev = ((1 - alpha_next) / alpha_next).sqrt()
-                noise = torch.randn_like(x_i).to(self.device)
-                x_i = mean + std_dev * noise
-            else:
-                x_i = mean
+    #         # Add stochastic noise if not at the final step
+    #         if time_next > 0:
+    #             std_dev = ((1 - alpha_next) / alpha_next).sqrt()
+    #             noise = torch.randn_like(x_i).to(self.device)
+    #             x_i = mean + std_dev * noise
+    #         else:
+    #             x_i = mean
 
-        return x_i
+    #     return x_i
     
     def pred_eps_(self, x, t, z, mask, c, guide_w, alpha, use_amp, clip_x=False):
         def pred_cfg_eps_double_batch():

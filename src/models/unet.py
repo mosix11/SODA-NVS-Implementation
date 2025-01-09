@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from .blocks import TimeEmbedding, LatentEmbedding, PoseEmbedding
+from .blocks import TimeEmbedding, LatentEmbedding, RayEncoder
 from .blocks import Upsample, Downsample, ResidualBlock
 from .blocks import DownsampleResBlock, UpsampleResBlock, ResAttBlock, MiddleBlock
 
@@ -21,7 +21,7 @@ class UNet(nn.Module):
                  t_dim:int = 512,
                  z_dim:int = 128,
                  c_dim:int = None,
-                 c_pos_emb_freq:int = 6,
+                 c_pos_emb_freq:int = 15,
                  self_attention_type:str = 'nromal'
                  ):
         """
@@ -44,7 +44,7 @@ class UNet(nn.Module):
         
         
         if c_dim:
-            self.c_emb = PoseEmbedding(num_freqs=c_pos_emb_freq)
+            self.c_emb = RayEncoder(pos_octaves=c_pos_emb_freq, dir_octaves=c_pos_emb_freq)
             # Linear
             self.rgb_linear_projector = nn.Conv2d(img_shape[0], n_channels, kernel_size=1)
             self.image_proj = nn.Conv2d(n_channels + c_dim, n_channels, kernel_size=3, padding=1)
@@ -143,10 +143,11 @@ class UNet(nn.Module):
         """
 
         t = self.time_emb(t)
+
         z = self.z_emb(z, drop_mask)
         if c is not None:
-            c = self.c_emb(c)
-            c = c.permute(0, 3, 1, 2)
+            pos, dirs = torch.split(c, (3, 3), dim=-1)
+            c = self.c_emb(pos, dirs)
             x = self.rgb_linear_projector(x)
             x = self.image_proj(torch.cat((x, c), dim=1))
         else:

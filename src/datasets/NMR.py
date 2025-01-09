@@ -90,6 +90,7 @@ class ObjectDataset(Dataset):
         if self.num_views == 1:
             views = views.squeeze(0)
             ray_grids = ray_grids.squeeze(0)
+            
         return views, ray_grids, label
 
     def get_all_views(self, idx):
@@ -175,6 +176,8 @@ class NMR():
             '04530566': 'Watercraft',
         }
         
+        self.dataset_size_info = {}
+        
         if len(exclude_classes) > 0:
             for cls in exclude_classes:
                 self.CLASS_IDS.remove(cls)
@@ -189,17 +192,17 @@ class NMR():
         
         encoder_transformations = [
             transforms.Resize(img_size),
-            transforms.ToImage(),                       # Convert PIL Image/NumPy to tensor
-            transforms.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0] and set dtype
+            transforms.ToImage(),                       
+            transforms.ToDtype(torch.float32, scale=True),  
             transforms.Normalize(self.dataset_mean, self.dataset_std) # Values Specific to NMR calculated from all splits
         ]
         self.encoder_transformations = transforms.Compose(encoder_transformations)
         
         denoiser_transformations = [
             transforms.Resize(img_size),
-            transforms.ToImage(),                       # Convert PIL Image/NumPy to tensor
-            transforms.ToDtype(torch.float32, scale=True),  # Scale to [0.0, 1.0] and set dtype
-            transforms.Lambda(lambda x: x * 2 - 1),         # Scale [0, 1] to [-1, 1]
+            transforms.ToImage(),                       
+            transforms.ToDtype(torch.float32, scale=True), 
+            transforms.Lambda(lambda x: x * 2 - 1),        
         ]
         self.denoizer_transformation = transforms.Compose(denoiser_transformations)
         
@@ -247,6 +250,10 @@ class NMR():
     def get_label_tag(self, label_idx):
         return self.CLASS_IDS_MAP[self.CLASS_IDS[label_idx]]
     
+    
+    def get_dataset_size_info(self):
+        return self.dataset_size_info
+    
     def _init_loaders(self):
         self.train_loader = self._build_dataloader(self.train_set)
         self.val_loader = self._build_dataloader(self.val_set)
@@ -282,6 +289,7 @@ class NMR():
 
     def _get_split_paths(self, split):
         all_objects_paths = []
+        self.dataset_size_info[split] = {}
         for class_id in self.CLASS_IDS:
             base_class_path = self.objects_base_dir.joinpath(Path(class_id))
             with open(os.path.join(base_class_path, f'softras_{split}.lst')) as f:
@@ -289,7 +297,7 @@ class NMR():
             objects_ids = [obj_id.rstrip() for obj_id in objects_ids if len(obj_id) > 1]
             objects_paths = [base_class_path.joinpath(object_id) for object_id in objects_ids]
             all_objects_paths.extend(objects_paths)
-            
+            self.dataset_size_info[split][class_id] = len(objects_paths)
         return all_objects_paths
         
         
