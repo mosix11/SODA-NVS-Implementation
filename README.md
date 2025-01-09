@@ -29,7 +29,7 @@ The following are the differences between this implementation and the original p
 1. I have not implemented the cross-attention mechanism for conditioning on the latent code, as described in the original paper (this improves performance on 3D datasets).
 2. The original paper suggests splitting the latent vector into \(m+1\) sub-vectors and applying layer-wise modulation for each layer in the denoiser U-Net. Instead, I used the full latent vector for feature modulation using AdaGN. This is because latent disentanglement was not the goal of my project.
 3. While the original paper uses 256×256 images for the encoder and 128×128 for the denoiser (NMR images are 64×64), I trained both networks with 32x32 images.
-4. The authors mention projecting 6D rays (\[o, d\]) onto a sphere to create a 512-dimensional encoding. I didn't fully understand this step, so I used 6D rays and applied scaled sinusoidal positional encoding to produce 288-dimensional vectors (adjustable with frequency band \(L\)) following NeRF-style encoding.
+4. The authors mention projecting 6D rays (\[o, d\]) onto a sphere to create a 512-dimensional encoding. I didn't fully understand this step, so I used 6D rays and applied scaled sinusoidal positional encoding to produce 180-dimensional vectors (adjustable with frequency band \(L\)) following NeRF-style encoding.
 
 ## Issues
 
@@ -70,7 +70,7 @@ python train.py --resume
 
 ### Sampling
 
-To sample all 24 views of an object from the test set, you can run the sample script by inputting the an object index or the script will take a random sample form the test set and generates 24 target views for this sample using one source view.
+To sample all 24 views of an object from the test set, you can run the sample script by inputting an object index or the script will take a random sample form the test set and generates 24 target views for this sample using one source view.
 
 ```bash
 python sample.py --objidx 1000
