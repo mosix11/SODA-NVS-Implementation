@@ -76,16 +76,24 @@ To sample all 24 views of an object from the test set, you can run the sample sc
 python sample.py --objidx 1000
 ```
 
-<div style="display: flex; flex-direction: column; align-items: center; gap: 20px; width: 100%;">
-    <!-- First Line: Three Images -->
-    <div style="display: flex; justify-content: center; gap: 20px; width: 100%; max-width: 1000px;">
-        <img src="media/samples/1000-real.png" style="width: 40%; height: auto;">
-        <img src="media/samples/1000-source.png" style="width: 10%; height: auto; object-fit: contain;">
-        <img src="media/samples/1000-gen.png" style="width: 40%; height: auto;">
+<div style="width: 100%; display: grid; grid-template-columns: 1fr 200px 1fr; gap: 20px;">
+    <div style="display: flex; flex-direction: column; text-align: center; margin: 0;">
+        <img src="media/samples/1000-real.png" style="width: 100%; height: auto;">
+        <div style="text-align: center; margin-top: 10px;">Original views of the object</div>
     </div>
-    <!-- Second Line: Two GIFs -->
-    <div style="display: flex; justify-content: center; gap: 20px; margin-top: 20px;">
+    <div style="display: flex; flex-direction: column; text-align: center; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+        <img src="media/samples/1000-source.png" style="width: 100%; height: auto; object-fit: contain;">
+        <div style="text-align: center; margin-top: 10px;">Source image fed to the encoder</div>
+    </div>
+    <div style="display: flex; flex-direction: column; text-align: center; margin: 0;">
+        <img src="media/samples/1000-gen.png" style="width: 100%; height: auto;">
+        <div style="text-align: center; margin-top: 10px;">Generated views by the denoiser</div>
+    </div>
+    <div style="text-align: center; margin: 0; width: fit-content; place-self: end;">
         <img src="media/samples/1000-real.gif" style="width: 200px; height: auto;">
+    </div>
+    <div></div>
+    <div style="text-align: center; margin: 0; width: fit-content; place-self: start;">
         <img src="media/samples/1000-gen.gif" style="width: 200px; height: auto;">
     </div>
 </div>
